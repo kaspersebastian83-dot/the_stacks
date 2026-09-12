@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Stacks &middot; Book Catalog v3.7.3</title>
+  <title>The Stacks &middot; Book Catalog v3.7.4</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -175,13 +175,14 @@ const STORAGE_MODE_KEY='bookCatalog:storageMode:v1';
 const IDB_NAME='the-stacks-catalog-db';
 const IDB_VERSION=1;
 const IDB_STORE='kv';
-const APP_VERSION='3.7.3';
+const APP_VERSION='3.7.4';
 const DEFAULT_SETTINGS={theme:'light',defaultStatus:'unread',defaultCollection:'',defaultLocation:blankLocation(),confirmDestructive:true,autoJsonSnapshot:true,backupReminderDays:14,compactMobile:false,showShortcutHints:true,preferGoogleBooksFallback:true};
 const STATUS=[
   ['unread','Unread'],['want','Want to read'],['reading','Currently reading'],['read','Read'],['dnf','Did not finish'],['reference','Reference only']
 ];
 const STATUS_LABEL=Object.fromEntries(STATUS);
 const CHANGELOG=[
+  {version:'3.7.4',date:'2026-09-12',items:['Enabled Library of Congress metadata fallback in the browser through a dedicated secure proxy.']},
   {version:'3.7.3',date:'2026-09-12',items:['Added a DNB fallback and an isolated Library of Congress metadata adapter.']},
   {version:'3.7.2',date:'2026-09-12',items:['Separated normal multiple-copy ownership from genuine possible duplicate records.']},
   {version:'3.7.1',date:'2026-09-12',items:['Simplified book organization into Needs identification, Ready to shelve, and Other attention.']},
@@ -758,6 +759,7 @@ function csvRowsToBooks(text){const rows=parseCSV(text);if(rows.length<2)return[
 const METADATA_REQUEST_TIMEOUT_MS=7000;
 const ISBN_METADATA_PROMISE_CACHE=new Map();
 const METADATA_PROVIDER_PRIORITY={openlibrary:0,google:1,dnb:2,loc:3};
+const LOC_PROXY_URL='https://the-stacks-loc-proxy.kasper-sebastian83.workers.dev/api/loc';
 const LANGUAGE_LABELS={ger:'German',de:'German',eng:'English',en:'English',fre:'French',fra:'French',fr:'French',spa:'Spanish',es:'Spanish',ita:'Italian',it:'Italian',dut:'Dutch',nld:'Dutch',nl:'Dutch'};
 
 async function fetchMetadataResponse(url,fetchImpl=fetch,timeoutMs=METADATA_REQUEST_TIMEOUT_MS){
@@ -845,13 +847,13 @@ function parseSruMarcResponse(xmlText,provider){
 }
 function buildDnbSruUrl(isbn){const url=new URL('https://services.dnb.de/sru/dnb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`dnb.isbn="${toISBN13(isbn)}"`,maximumRecords:'5',recordSchema:'MARC21-xml'});return url.toString();}
 function buildLcSruUrl(isbn){const url=new URL('https://lx2.loc.gov/sru/lcdb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`bath.isbn="${toISBN13(isbn)}"`,maximumRecords:'5',recordSchema:'marcxml'});return url.toString();}
+function buildLcProxyUrl(isbn){const url=new URL(LOC_PROXY_URL);url.search=new URLSearchParams({isbn:toISBN13(isbn)});return url.toString();}
 async function lookupSruProviderByIsbn(isbn,{provider,url,fetchImpl=fetch}={}){
   try{const response=await fetchMetadataResponse(url,fetchImpl);if(!response.ok)return[];const candidates=parseSruMarcResponse(await response.text(),provider);return selectBestExactMetadataCandidates(candidates,isbn);}catch{return[];}
 }
 async function lookupDnbByIsbn(isbn,options={}){return lookupSruProviderByIsbn(isbn,{provider:'dnb',url:buildDnbSruUrl(isbn),...options});}
-async function lookupLibraryOfCongressByIsbn(isbn,options={}){return lookupSruProviderByIsbn(isbn,{provider:'loc',url:buildLcSruUrl(isbn),...options});}
-// LC currently omits browser CORS headers, so its adapter stays isolated until direct file-origin access is supported.
-const BROWSER_NATIONAL_LIBRARY_PROVIDERS=[lookupDnbByIsbn];
+async function lookupLibraryOfCongressByIsbn(isbn,options={}){return lookupSruProviderByIsbn(isbn,{provider:'loc',url:buildLcProxyUrl(isbn),...options});}
+const BROWSER_NATIONAL_LIBRARY_PROVIDERS=[lookupDnbByIsbn,lookupLibraryOfCongressByIsbn];
 
 function openLibraryBookToMeta(book,isbn){
   if(!book)return null;
