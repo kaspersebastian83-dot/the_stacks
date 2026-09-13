@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Stacks &middot; Book Catalog v3.9.4</title>
+  <title>The Stacks &middot; Book Catalog v3.9.5</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -182,13 +182,14 @@ const STORAGE_MODE_KEY='bookCatalog:storageMode:v1';
 const IDB_NAME='the-stacks-catalog-db';
 const IDB_VERSION=1;
 const IDB_STORE='kv';
-const APP_VERSION='3.9.4';
+const APP_VERSION='3.9.5';
 const DEFAULT_SETTINGS={theme:'light',defaultStatus:'unread',defaultCollection:'',defaultLocation:blankLocation(),confirmDestructive:true,autoJsonSnapshot:true,backupReminderDays:14,compactMobile:false,showShortcutHints:true,preferGoogleBooksFallback:true};
 const STATUS=[
   ['unread','Unread'],['want','Want to read'],['reading','Currently reading'],['read','Read'],['dnf','Did not finish'],['reference','Reference only']
 ];
 const STATUS_LABEL=Object.fromEntries(STATUS);
 const CHANGELOG=[
+  {version:'3.9.5',date:'2026-09-13',items:['Improved book recognition by routing Google Books ISBN lookups through authenticated secure access.']},
   {version:'3.9.4',date:'2026-09-13',items:['Improved ISBN recognition with ISBN-10/13 rescue, additional Open Library lookup, and transient provider retries.']},
   {version:'3.9.3',date:'2026-09-13',items:['Added safe Library data controls for backups, a deterministic sample library, and verified library reset.']},
   {version:'3.9.2',date:'2026-09-13',items:['Improved empty states and helper text across Library, Organize, Shelves, and catalog workflows.']},
@@ -809,6 +810,7 @@ const ISBN_METADATA_PROMISE_CACHE=new Map();
 const IDENTIFICATION_SEARCH_PROMISE_CACHE=new Map();
 const METADATA_PROVIDER_PRIORITY={openlibrary:0,google:1,dnb:2,loc:3};
 const LOC_PROXY_URL='https://the-stacks-loc-proxy.kasper-sebastian83.workers.dev/api/loc';
+const GOOGLE_BOOKS_PROXY_URL='https://the-stacks-google-books.kasper-sebastian83.workers.dev/api/google-books';
 const LANGUAGE_LABELS={ger:'German',de:'German',eng:'English',en:'English',fre:'French',fra:'French',fr:'French',spa:'Spanish',es:'Spanish',ita:'Italian',it:'Italian',dut:'Dutch',nld:'Dutch',nl:'Dutch'};
 const TRANSIENT_METADATA_STATUS=new Set([429,502,503,504]);
 
@@ -916,6 +918,7 @@ function parseSruMarcResponse(xmlText,provider){
 function buildDnbSruUrl(isbn){const url=new URL('https://services.dnb.de/sru/dnb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`dnb.isbn="${toISBN13(isbn)}"`,maximumRecords:'5',recordSchema:'MARC21-xml'});return url.toString();}
 function buildLcSruUrl(isbn){const url=new URL('https://lx2.loc.gov/sru/lcdb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`bath.isbn="${toISBN13(isbn)}"`,maximumRecords:'5',recordSchema:'marcxml'});return url.toString();}
 function buildLcProxyUrl(isbn){const url=new URL(LOC_PROXY_URL);url.search=new URLSearchParams({isbn:toISBN13(isbn)});return url.toString();}
+function buildGoogleBooksProxyUrl(isbn){const normalized=normalizeISBN(isbn);if(!normalized||!isValidISBN(normalized))return'';const url=new URL(GOOGLE_BOOKS_PROXY_URL);url.search=new URLSearchParams({isbn:normalized});return url.toString();}
 async function lookupSruProviderByIsbn(isbn,{provider,url,fetchImpl=fetch,trace,retryDelayMs,timeoutMs=METADATA_REQUEST_TIMEOUT_MS}={}){
   const options={trace,retryDelayMs};
   try{const response=await fetchMetadataResponse(url,fetchImpl,timeoutMs,options);if(!response.ok){recordMetadataTrace(options,provider,'exact-isbn',metadataFailureState(response),{httpStatus:response.status});return[];}const candidates=parseSruMarcResponse(await response.text(),provider);const exact=selectBestExactMetadataCandidates(candidates,isbn);recordMetadataTrace(options,provider,'exact-isbn',exact.length?'FOUND':(candidates.length?'WRONG_ISBN':'NO_RECORD'));return exact;}catch(err){recordMetadataTrace(options,provider,'exact-isbn',metadataFailureState(err));return[];}
@@ -950,7 +953,7 @@ function googleVolumeToMeta(volume){
 async function lookupGoogleBooksISBNCandidates(isbn,book,options={}){
   const requested=toISBN13(isbn);if(!requested||!isValidISBN(requested))return[];const fetchImpl=options.fetchImpl||fetch;const requestOptions={trace:options.trace,retryDelayMs:options.retryDelayMs};
   for(const variant of isbnVariants(isbn)){
-    try{const response=await fetchMetadataResponse(`https://www.googleapis.com/books/v1/volumes?q=isbn:${variant}&maxResults=5`,fetchImpl,options.timeoutMs||METADATA_REQUEST_TIMEOUT_MS,requestOptions);if(!response.ok){recordMetadataTrace(options,'google','isbn-'+variant,metadataFailureState(response),{httpStatus:response.status});continue;}const data=await response.json();const candidates=(data.items||[]).map(item=>googleVolumeToMeta(item.volumeInfo)).filter(Boolean);const exact=selectBestExactMetadataCandidates(candidates,requested).map(candidate=>book?enrichCandidateMeta(book,candidate,{metadataSource:'Google Books',metadataMatchMethod:'Exact ISBN via Google Books'}):candidate);recordMetadataTrace(options,'google','isbn-'+variant,exact.length?'FOUND':(candidates.length?'WRONG_ISBN':'NO_RECORD'));if(exact.length)return exact;}catch(err){recordMetadataTrace(options,'google','isbn-'+variant,metadataFailureState(err));}
+    try{const response=await fetchMetadataResponse(buildGoogleBooksProxyUrl(variant),fetchImpl,options.timeoutMs||METADATA_REQUEST_TIMEOUT_MS,requestOptions);if(!response.ok){recordMetadataTrace(options,'google','secure-proxy-isbn-'+variant,metadataFailureState(response),{httpStatus:response.status});continue;}const data=await response.json();const candidates=(data.items||[]).map(item=>googleVolumeToMeta(item.volumeInfo)).filter(Boolean);const exact=selectBestExactMetadataCandidates(candidates,requested).map(candidate=>book?enrichCandidateMeta(book,candidate,{metadataSource:'Google Books',metadataMatchMethod:'Exact ISBN via Google Books'}):candidate);recordMetadataTrace(options,'google','secure-proxy-isbn-'+variant,exact.length?'FOUND':(candidates.length?'WRONG_ISBN':'NO_RECORD'));if(exact.length)return exact;}catch(err){recordMetadataTrace(options,'google','secure-proxy-isbn-'+variant,metadataFailureState(err));}
   }
   return[];
 }
