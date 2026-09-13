@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Stacks &middot; Book Catalog v3.9.3</title>
+  <title>The Stacks &middot; Book Catalog v3.9.4</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -182,13 +182,14 @@ const STORAGE_MODE_KEY='bookCatalog:storageMode:v1';
 const IDB_NAME='the-stacks-catalog-db';
 const IDB_VERSION=1;
 const IDB_STORE='kv';
-const APP_VERSION='3.9.3';
+const APP_VERSION='3.9.4';
 const DEFAULT_SETTINGS={theme:'light',defaultStatus:'unread',defaultCollection:'',defaultLocation:blankLocation(),confirmDestructive:true,autoJsonSnapshot:true,backupReminderDays:14,compactMobile:false,showShortcutHints:true,preferGoogleBooksFallback:true};
 const STATUS=[
   ['unread','Unread'],['want','Want to read'],['reading','Currently reading'],['read','Read'],['dnf','Did not finish'],['reference','Reference only']
 ];
 const STATUS_LABEL=Object.fromEntries(STATUS);
 const CHANGELOG=[
+  {version:'3.9.4',date:'2026-09-13',items:['Improved ISBN recognition with ISBN-10/13 rescue, additional Open Library lookup, and transient provider retries.']},
   {version:'3.9.3',date:'2026-09-13',items:['Added safe Library data controls for backups, a deterministic sample library, and verified library reset.']},
   {version:'3.9.2',date:'2026-09-13',items:['Improved empty states and helper text across Library, Organize, Shelves, and catalog workflows.']},
   {version:'3.9.1',date:'2026-09-13',items:['Clarified Collections versus physical Shelf terminology across the interface.']},
@@ -318,6 +319,8 @@ function isValidISBN10(s){s=normalizeISBN(s);if(!/^\d{9}[\dX]$/.test(s))return f
 function isValidISBN13(s){s=normalizeISBN(s);return /^\d{13}$/.test(s)&&isbn13CheckDigit(s.slice(0,12))===s[12];}
 function isValidISBN(s){s=normalizeISBN(s);return !s||isValidISBN10(s)||isValidISBN13(s);}
 function toISBN13(s){s=normalizeISBN(s);if(!s)return '';if(isValidISBN13(s))return s;if(isValidISBN10(s)){const p='978'+s.slice(0,9);return p+isbn13CheckDigit(p);}return s;}
+function toISBN10(s){s=normalizeISBN(s);if(isValidISBN10(s))return s;if(!isValidISBN13(s)||!s.startsWith('978'))return'';const body=s.slice(3,12);const sum=body.split('').reduce((total,digit,index)=>total+Number(digit)*(10-index),0);const check=(11-(sum%11))%11;return body+(check===10?'X':String(check));}
+function isbnVariants(value){const original=normalizeISBN(value);if(!original||!isValidISBN(original))return[];return uniq([original,toISBN13(original),toISBN10(original)]).filter(isbn=>isValidISBN(isbn));}
 function statusLabel(status){return STATUS_LABEL[status]||'Unread';}
 const FORMAT_OPTIONS=['','Hardcover','Paperback','Mass market paperback','Ebook','Audiobook','Journal','Other'];
 const CONDITION_OPTIONS=['','New','Very good','Good','Acceptable','Damaged','Needs repair'];
@@ -807,11 +810,26 @@ const IDENTIFICATION_SEARCH_PROMISE_CACHE=new Map();
 const METADATA_PROVIDER_PRIORITY={openlibrary:0,google:1,dnb:2,loc:3};
 const LOC_PROXY_URL='https://the-stacks-loc-proxy.kasper-sebastian83.workers.dev/api/loc';
 const LANGUAGE_LABELS={ger:'German',de:'German',eng:'English',en:'English',fre:'French',fra:'French',fr:'French',spa:'Spanish',es:'Spanish',ita:'Italian',it:'Italian',dut:'Dutch',nld:'Dutch',nl:'Dutch'};
+const TRANSIENT_METADATA_STATUS=new Set([429,502,503,504]);
 
-async function fetchMetadataResponse(url,fetchImpl=fetch,timeoutMs=METADATA_REQUEST_TIMEOUT_MS){
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),timeoutMs);
-  try{return await fetchImpl(url,{signal:controller.signal});}finally{clearTimeout(timer);}
+function metadataFailureState(value){
+  if(value?.status===429)return'RATE_LIMITED';if(TRANSIENT_METADATA_STATUS.has(value?.status))return'TEMPORARY_ERROR';if(value&&value.ok===false)return'HTTP_ERROR';if(value?.name==='AbortError')return'TIMEOUT';if(value instanceof SyntaxError)return'PARSE_ERROR';return'TEMPORARY_ERROR';
+}
+function recordMetadataTrace(options,provider,strategy,state,detail={}){if(Array.isArray(options?.trace))options.trace.push({provider,strategy,state,...detail});}
+function metadataRetryDelay(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+async function fetchMetadataResponse(url,fetchImpl=fetch,timeoutMs=METADATA_REQUEST_TIMEOUT_MS,options={}){
+  const attempts=options.retry===false?1:2;let lastError;
+  for(let attempt=0;attempt<attempts;attempt++){
+    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);let response;
+    try{
+      response=await fetchImpl(url,{signal:controller.signal});
+    }catch(err){lastError=err;if(attempt+1>=attempts)throw err;}
+    finally{clearTimeout(timer);}
+    if(response&&!TRANSIENT_METADATA_STATUS.has(response.status))return response;
+    if(response&&attempt+1>=attempts)return response;
+    await metadataRetryDelay(options.retryDelayMs??650);
+  }
+  throw lastError||new Error('Metadata request failed');
 }
 function normalizedCandidateIsbns(meta){
   return uniq([...(Array.isArray(meta?.isbns)?meta.isbns:[]),meta?.isbn||''].map(normalizeISBN).filter(isbn=>isbn&&isValidISBN(isbn)).map(toISBN13));
@@ -898,8 +916,9 @@ function parseSruMarcResponse(xmlText,provider){
 function buildDnbSruUrl(isbn){const url=new URL('https://services.dnb.de/sru/dnb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`dnb.isbn="${toISBN13(isbn)}"`,maximumRecords:'5',recordSchema:'MARC21-xml'});return url.toString();}
 function buildLcSruUrl(isbn){const url=new URL('https://lx2.loc.gov/sru/lcdb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`bath.isbn="${toISBN13(isbn)}"`,maximumRecords:'5',recordSchema:'marcxml'});return url.toString();}
 function buildLcProxyUrl(isbn){const url=new URL(LOC_PROXY_URL);url.search=new URLSearchParams({isbn:toISBN13(isbn)});return url.toString();}
-async function lookupSruProviderByIsbn(isbn,{provider,url,fetchImpl=fetch}={}){
-  try{const response=await fetchMetadataResponse(url,fetchImpl);if(!response.ok)return[];const candidates=parseSruMarcResponse(await response.text(),provider);return selectBestExactMetadataCandidates(candidates,isbn);}catch{return[];}
+async function lookupSruProviderByIsbn(isbn,{provider,url,fetchImpl=fetch,trace,retryDelayMs,timeoutMs=METADATA_REQUEST_TIMEOUT_MS}={}){
+  const options={trace,retryDelayMs};
+  try{const response=await fetchMetadataResponse(url,fetchImpl,timeoutMs,options);if(!response.ok){recordMetadataTrace(options,provider,'exact-isbn',metadataFailureState(response),{httpStatus:response.status});return[];}const candidates=parseSruMarcResponse(await response.text(),provider);const exact=selectBestExactMetadataCandidates(candidates,isbn);recordMetadataTrace(options,provider,'exact-isbn',exact.length?'FOUND':(candidates.length?'WRONG_ISBN':'NO_RECORD'));return exact;}catch(err){recordMetadataTrace(options,provider,'exact-isbn',metadataFailureState(err));return[];}
 }
 async function lookupDnbByIsbn(isbn,options={}){return lookupSruProviderByIsbn(isbn,{provider:'dnb',url:buildDnbSruUrl(isbn),...options});}
 async function lookupLibraryOfCongressByIsbn(isbn,options={}){return lookupSruProviderByIsbn(isbn,{provider:'loc',url:buildLcProxyUrl(isbn),...options});}
@@ -913,7 +932,14 @@ function openLibraryBookToMeta(book,isbn){
   return{title:book.title||'',authors:(book.authors||[]).map(author=>author.name).join(', '),year:book.publish_date?(String(book.publish_date).match(/\d{4}/)?.[0]||''):'',publisher:(book.publishers||[]).map(publisher=>publisher.name).join(', '),pages:book.number_of_pages||'',language:'',edition:'',format:'',originalPublicationYear:structuredOriginalPublicationYear(book.first_publish_date||book.first_publish_year),series:'',seriesNumber:'',translators:openLibraryContributorNames(book,'translator'),editors:openLibraryContributorNames(book,'editor'),tags:(book.subjects||[]).slice(0,5).map(subject=>typeof subject==='string'?subject:subject.name).filter(Boolean),cover:book.cover?.large||book.cover?.medium||`https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg`,isbn:isbns[0]||'',isbns,metadataProvider:'openlibrary',metadataSource:'Open Library',metadataConfidence:'High',metadataMatchMethod:'Exact ISBN via Open Library'};
 }
 async function lookupOpenLibraryISBNCandidates(isbn,options={}){
-  try{const response=await fetchMetadataResponse(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`,options.fetchImpl||fetch);if(!response.ok)return[];const data=await response.json();const candidate=openLibraryBookToMeta(data[`ISBN:${isbn}`],isbn);return selectBestExactMetadataCandidates([candidate],isbn);}catch{return[];}
+  const requested=toISBN13(isbn);if(!requested||!isValidISBN(requested))return[];const variants=isbnVariants(isbn);const fetchImpl=options.fetchImpl||fetch;const requestOptions={trace:options.trace,retryDelayMs:options.retryDelayMs};
+  for(const variant of variants){
+    try{const response=await fetchMetadataResponse(`https://openlibrary.org/api/books?bibkeys=ISBN:${variant}&format=json&jscmd=data`,fetchImpl,options.timeoutMs||METADATA_REQUEST_TIMEOUT_MS,requestOptions);if(!response.ok){recordMetadataTrace(options,'openlibrary','books-api-'+variant,metadataFailureState(response),{httpStatus:response.status});continue;}const data=await response.json();const candidate=openLibraryBookToMeta(data[`ISBN:${variant}`],variant);const exact=selectBestExactMetadataCandidates([candidate],requested);recordMetadataTrace(options,'openlibrary','books-api-'+variant,exact.length?'FOUND':(candidate?'WRONG_ISBN':'NO_RECORD'));if(exact.length)return exact;}catch(err){recordMetadataTrace(options,'openlibrary','books-api-'+variant,metadataFailureState(err));}
+  }
+  for(const variant of variants){
+    try{const params=new URLSearchParams({isbn:variant,limit:'5'});const response=await fetchMetadataResponse('https://openlibrary.org/search.json?'+params.toString(),fetchImpl,options.timeoutMs||METADATA_REQUEST_TIMEOUT_MS,requestOptions);if(!response.ok){recordMetadataTrace(options,'openlibrary','search-api-'+variant,metadataFailureState(response),{httpStatus:response.status});continue;}const data=await response.json();const candidates=(data.docs||[]).map(openLibraryDocToMeta).filter(Boolean).map(candidate=>({...candidate,metadataConfidence:'High',metadataMatchMethod:'Exact ISBN via Open Library Search'}));const exact=selectBestExactMetadataCandidates(candidates,requested);recordMetadataTrace(options,'openlibrary','search-api-'+variant,exact.length?'FOUND':(candidates.length?'WRONG_ISBN':'NO_RECORD'));if(exact.length)return exact;}catch(err){recordMetadataTrace(options,'openlibrary','search-api-'+variant,metadataFailureState(err));}
+  }
+  return[];
 }
 async function lookupOpenLibrary(isbn){return (await lookupOpenLibraryISBNCandidates(toISBN13(isbn)))[0]||null;}
 function googleVolumeToMeta(volume){
@@ -922,7 +948,11 @@ function googleVolumeToMeta(volume){
   return normalizeMetadataCandidate({title:volume.title||'',authors:(volume.authors||[]).join(', '),year:volume.publishedDate?(String(volume.publishedDate).match(/\d{4}/)?.[0]||''):'',publisher:volume.publisher||'',pages:volume.pageCount||'',language:LANGUAGE_LABELS[String(volume.language||'').toLowerCase()]||volume.language||'',edition:'',format:volume.printType==='BOOK'?'Print book':'',tags:(volume.categories||[]).slice(0,5),cover:volume.imageLinks?.extraLarge||volume.imageLinks?.large||volume.imageLinks?.thumbnail||'',isbn:isbns[0]||'',isbns,metadataProvider:'google',metadataSource:'Google Books',metadataConfidence:'High',metadataMatchMethod:'Exact ISBN via Google Books'});
 }
 async function lookupGoogleBooksISBNCandidates(isbn,book,options={}){
-  try{const response=await fetchMetadataResponse(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&maxResults=5`,options.fetchImpl||fetch);if(!response.ok)return[];const data=await response.json();return selectBestExactMetadataCandidates((data.items||[]).map(item=>googleVolumeToMeta(item.volumeInfo)),isbn).map(candidate=>book?enrichCandidateMeta(book,candidate,{metadataSource:'Google Books',metadataMatchMethod:'Exact ISBN via Google Books'}):candidate);}catch{return[];}
+  const requested=toISBN13(isbn);if(!requested||!isValidISBN(requested))return[];const fetchImpl=options.fetchImpl||fetch;const requestOptions={trace:options.trace,retryDelayMs:options.retryDelayMs};
+  for(const variant of isbnVariants(isbn)){
+    try{const response=await fetchMetadataResponse(`https://www.googleapis.com/books/v1/volumes?q=isbn:${variant}&maxResults=5`,fetchImpl,options.timeoutMs||METADATA_REQUEST_TIMEOUT_MS,requestOptions);if(!response.ok){recordMetadataTrace(options,'google','isbn-'+variant,metadataFailureState(response),{httpStatus:response.status});continue;}const data=await response.json();const candidates=(data.items||[]).map(item=>googleVolumeToMeta(item.volumeInfo)).filter(Boolean);const exact=selectBestExactMetadataCandidates(candidates,requested).map(candidate=>book?enrichCandidateMeta(book,candidate,{metadataSource:'Google Books',metadataMatchMethod:'Exact ISBN via Google Books'}):candidate);recordMetadataTrace(options,'google','isbn-'+variant,exact.length?'FOUND':(candidates.length?'WRONG_ISBN':'NO_RECORD'));if(exact.length)return exact;}catch(err){recordMetadataTrace(options,'google','isbn-'+variant,metadataFailureState(err));}
+  }
+  return[];
 }
 async function lookupGoogleBooks(isbn){return (await lookupGoogleBooksISBNCandidates(toISBN13(isbn)))[0]||null;}
 
