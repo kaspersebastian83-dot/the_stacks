@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Stacks &middot; Book Catalog v3.9.6</title>
+  <title>The Stacks &middot; Book Catalog v3.9.7</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -130,6 +130,10 @@
 </style>
 
 <style>
+.home-cover-card{grid-template-columns:minmax(0,1fr);overflow:hidden}.home-cover-card .cover{width:100%;min-width:0;max-width:100%;height:auto;aspect-ratio:2/3;overflow:hidden}.home-cover-card .cover img{display:block;width:100%;height:100%;min-width:0;max-width:100%;max-height:100%;object-fit:cover}
+</style>
+
+<style>
 .backup-health-panel{margin:14px 0 16px;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.backup-health-panel.good{border-color:rgba(23,165,107,.25)}.backup-health-panel.warn{border-color:rgba(245,158,11,.34)}.backup-health-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.backup-health-item{display:grid;align-content:start;gap:3px;min-width:0}.backup-health-item>span,.backup-health-item>label{font-size:11px;color:var(--muted)}.backup-health-item>b{color:var(--ink);overflow-wrap:anywhere}.backup-health-item small{color:var(--muted);line-height:1.35;overflow-wrap:anywhere}.backup-health-item .select{width:100%;min-height:40px;margin-top:2px}.backup-health-panel>p{margin:12px 0;color:var(--muted);line-height:1.45}body.theme-dark .backup-health-panel{background:#16283c;border-color:rgba(90,167,232,.25)}body.theme-dark .backup-health-panel.good{border-color:rgba(23,165,107,.35)}body.theme-dark .backup-health-panel.warn{border-color:rgba(245,158,11,.4)}body.theme-dark .backup-health-item>b{color:#eef7ff}@media(max-width:700px){.backup-health-grid{grid-template-columns:1fr}.backup-health-panel .btn{width:100%;min-height:44px}}
 </style>
 
@@ -186,13 +190,14 @@ const STORAGE_MODE_KEY='bookCatalog:storageMode:v1';
 const IDB_NAME='the-stacks-catalog-db';
 const IDB_VERSION=1;
 const IDB_STORE='kv';
-const APP_VERSION='3.9.6';
+const APP_VERSION='3.9.7';
 const DEFAULT_SETTINGS={theme:'light',defaultStatus:'unread',defaultCollection:'',defaultLocation:blankLocation(),confirmDestructive:true,autoJsonSnapshot:true,backupReminderDays:14,compactMobile:false,showShortcutHints:true,preferGoogleBooksFallback:true};
 const STATUS=[
   ['unread','Unread'],['want','Want to read'],['reading','Currently reading'],['read','Read'],['dnf','Did not finish'],['reference','Reference only']
 ];
 const STATUS_LABEL=Object.fromEntries(STATUS);
 const CHANGELOG=[
+  {version:'3.9.7',date:'2026-09-14',items:['Fixed oversized book covers on Home so real cover images remain contained within Recently added cards.']},
   {version:'3.9.6',date:'2026-09-14',items:['Added clearer portable-backup health, configurable reminders, and consistent backup status across Home and Settings.']},
   {version:'3.9.5',date:'2026-09-13',items:['Improved book recognition by routing Google Books ISBN lookups through authenticated secure access.']},
   {version:'3.9.4',date:'2026-09-13',items:['Improved ISBN recognition with ISBN-10/13 rescue, additional Open Library lookup, and transient provider retries.']},
