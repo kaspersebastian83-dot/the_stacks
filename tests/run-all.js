@@ -8,7 +8,9 @@ const suites=[
   'search-regression.test.js',
   'visual-browse.test.js',
   'library-browse-refinement.test.js',
-  'core-model-regression.test.js'
+  'core-model-regression.test.js',
+  'scan-regression.test.js',
+  'backup-roundtrip-regression.test.js'
 ];
 
 let failures=0;
