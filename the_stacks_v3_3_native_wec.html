@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Stacks &middot; Book Catalog v3.9.11</title>
+  <title>The Stacks &middot; Book Catalog v3.9.12</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -204,13 +204,14 @@ const STORAGE_MODE_KEY='bookCatalog:storageMode:v1';
 const IDB_NAME='the-stacks-catalog-db';
 const IDB_VERSION=1;
 const IDB_STORE='kv';
-const APP_VERSION='3.9.11';
+const APP_VERSION='3.9.12';
 const DEFAULT_SETTINGS={theme:'light',defaultStatus:'unread',defaultCollection:'',defaultLocation:blankLocation(),confirmDestructive:true,autoJsonSnapshot:true,backupReminderDays:14,compactMobile:false,showShortcutHints:true,preferGoogleBooksFallback:true};
 const STATUS=[
   ['unread','Unread'],['want','Want to read'],['reading','Currently reading'],['read','Read'],['dnf','Did not finish'],['reference','Reference only']
 ];
 const STATUS_LABEL=Object.fromEntries(STATUS);
 const CHANGELOG=[
+  {version:'3.9.12',date:'2026-09-17',items:['Added automated regression coverage and continuous safety checks for catalog identity, physical Copies, search, browsing, locations, scanning, and backup/restore behavior.']},
   {version:'3.9.11',date:'2026-09-16',items:['Refined Authors, Series, and Subjects browsing with clearer Work/Copy counts, alphabetical exploration, richer detail views, and direct Visual Browse for selected library subsets.']},
   {version:'3.9.10',date:'2026-09-16',items:['Added Visual Browse, an immersive cover-first way to flip through filtered physical books with swipe, keyboard, and perspective navigation.']},
   {version:'3.9.9',date:'2026-09-16',items:['Improved catalog search with accent and punctuation tolerance, careful typo matching, and more useful relevance ordering.']},

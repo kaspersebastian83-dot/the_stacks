@@ -10,7 +10,9 @@ const suites=[
   'library-browse-refinement.test.js',
   'core-model-regression.test.js',
   'scan-regression.test.js',
-  'backup-roundtrip-regression.test.js'
+  'backup-roundtrip-regression.test.js',
+  'location-regression.test.js',
+  'reset-safety-regression.test.js'
 ];
 
 let failures=0;
