@@ -7,7 +7,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 const {performance}=require('node:perf_hooks');
 
-const html=fs.readFileSync(path.join(__dirname,'..','the_stacks_v3_3_native_wec.html'),'utf8');
+const html=require('./load-production-source');
 const slice=(start,end)=>{const from=html.indexOf(start),to=html.indexOf(end,from);assert.ok(from>=0&&to>from,`Could not extract ${start}`);return html.slice(from,to);};
 const runtime=`
 function uniq(arr){return [...new Set((arr||[]).map(s=>String(s||'').trim()).filter(Boolean))];}

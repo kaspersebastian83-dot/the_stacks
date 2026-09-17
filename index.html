@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>The Stacks &middot; Book Catalog v3.9.12</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to catalog</a>
+    <div id="root"><div style="padding:24px;font-family:system-ui,sans-serif;color:#14324a;background:#f6fbff;min-height:100vh"><h1 style="margin:0 0 8px;font-size:24px">Loading The Stacks...</h1><p style="margin:0;color:#516b80">If this message remains, the app may have hit a startup error.</p></div></div>
+    <script>
+      (function(){
+        function showStartupError(message){
+          var root=document.getElementById('root');
+          if(!root)return;
+          root.innerHTML='<div style="padding:24px;font-family:system-ui,sans-serif;color:#14324a;background:#f6fbff;min-height:100vh"><h1 style="margin:0 0 8px;font-size:24px;color:#dc5252">The Stacks could not start</h1><p style="max-width:720px;line-height:1.5">'+String(message).replace(/[<>&]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]})+'</p><p style="color:#516b80">Your catalog data is still in your browser storage. Try the previous stable version or send this error message for debugging.</p></div>';
+        }
+        window.addEventListener('error',function(e){showStartupError(e.message||'Unexpected startup error');});
+        window.addEventListener('unhandledrejection',function(e){showStartupError((e.reason&&e.reason.message)||e.reason||'Unexpected async startup error');});
+      })();
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
