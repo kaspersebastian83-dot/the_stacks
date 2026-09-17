@@ -8,6 +8,7 @@ const vm=require('node:vm');
 const {performance}=require('node:perf_hooks');
 
 const html=require('./load-production-source');
+const isbnSource=require('./load-production-isbn-source');
 const slice=(start,end)=>{const from=html.indexOf(start),to=html.indexOf(end,from);assert.ok(from>=0&&to>from,`Could not extract ${start}`);return html.slice(from,to);};
 const runtime=`
 function uniq(arr){return [...new Set((arr||[]).map(s=>String(s||'').trim()).filter(Boolean))];}
@@ -32,7 +33,7 @@ function workKeyForBook(book){return book.workId||'';}
 function duplicateGroups(){return [];}
 `;
 const source=runtime+
-  slice('function normalizeISBN','function statusLabel')+
+  isbnSource+
   slice('function stripQuotes','function csvEscape')+
   slice('function filterBooks','const BUILTIN_VIEWS')+
   slice('function visualBrowseWindow','function VisualBrowseView')+

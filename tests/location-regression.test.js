@@ -7,6 +7,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 
 const html=require('./load-production-source');
+const isbnSource=require('./load-production-isbn-source');
 const slice=(start,end)=>{
   const from=html.indexOf(start),to=html.indexOf(end,from);
   assert.ok(from>=0&&to>from,`Could not extract ${start}`);
@@ -19,7 +20,7 @@ let generatedId=0;
 function genId(){return 'generated-'+(++generatedId);}
 `;
 
-const source=runtime+
+const source=runtime+isbnSource+
   slice('function uniq','const FORMAT_OPTIONS')+
   slice('function blankLocation','function locationText')+
   slice('function collectionNames','function editorShelfOptions')+

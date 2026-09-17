@@ -1,5 +1,6 @@
 import React,{useEffect,useMemo,useRef,useState} from "react";
 import {BrowserMultiFormatOneDReader} from "@zxing/browser";
+import {extractMarcIsbn,isbnVariants,isValidISBN,normalizeISBN,normalizeScannedCode,toISBN13} from "./core/isbn.mjs";
 
 const BOOKS_KEY='bookCatalog:library:v1';
 const NATIVE_CATALOG_KEY='bookCatalog:nativeCatalog:v1';
@@ -154,14 +155,6 @@ function structuredOriginalPublicationYear(value){const year=String(value||'').t
 function normalizeSeriesText(value){return String(value||'').trim();}
 function normalizeSeriesNumber(value){return String(value||'').trim();}
 function genId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
-function normalizeISBN(r){return String(r||'').replace(/[-\s]/g,'').toUpperCase();}
-function isbn13CheckDigit(first12){const sum=first12.split('').reduce((a,d,i)=>a+Number(d)*(i%2?3:1),0);return String((10-(sum%10))%10);}
-function isValidISBN10(s){s=normalizeISBN(s);if(!/^\d{9}[\dX]$/.test(s))return false;const sum=s.split('').reduce((a,ch,i)=>a+(ch==='X'?10:Number(ch))*(10-i),0);return sum%11===0;}
-function isValidISBN13(s){s=normalizeISBN(s);return /^\d{13}$/.test(s)&&isbn13CheckDigit(s.slice(0,12))===s[12];}
-function isValidISBN(s){s=normalizeISBN(s);return !s||isValidISBN10(s)||isValidISBN13(s);}
-function toISBN13(s){s=normalizeISBN(s);if(!s)return '';if(isValidISBN13(s))return s;if(isValidISBN10(s)){const p='978'+s.slice(0,9);return p+isbn13CheckDigit(p);}return s;}
-function toISBN10(s){s=normalizeISBN(s);if(isValidISBN10(s))return s;if(!isValidISBN13(s)||!s.startsWith('978'))return'';const body=s.slice(3,12);const sum=body.split('').reduce((total,digit,index)=>total+Number(digit)*(10-index),0);const check=(11-(sum%11))%11;return body+(check===10?'X':String(check));}
-function isbnVariants(value){const original=normalizeISBN(value);if(!original||!isValidISBN(original))return[];return uniq([original,toISBN13(original),toISBN10(original)]).filter(isbn=>isValidISBN(isbn));}
 function statusLabel(status){return STATUS_LABEL[status]||'Unread';}
 const FORMAT_OPTIONS=['','Hardcover','Paperback','Mass market paperback','Ebook','Audiobook','Journal','Other'];
 const CONDITION_OPTIONS=['','New','Very good','Good','Acceptable','Damaged','Needs repair'];
@@ -766,10 +759,6 @@ function marcSubfields(field,code){return marcElements(field,'subfield').filter(
 function firstMarcSubfield(record,tag,code,filter){const field=marcDatafields(record,tag).find(item=>!filter||filter(item));return field?marcSubfields(field,code)[0]||'':'';}
 function cleanMarcText(value){return String(value||"").trim().replace(/\s*[\/:;,]\s*$/,"").trim();}
 function marcContributors(record){const translators=[],editors=[];marcDatafields(record,'700').forEach(field=>{const name=cleanMarcText(marcSubfields(field,'a')[0]||'');if(!name)return;const roles=[...marcSubfields(field,'4'),...marcSubfields(field,'e')].map(contributorRoleKind);if(roles.includes('translator'))translators.push(name);if(roles.includes('editor'))editors.push(name);});return{translators:normalizePersonList(translators),editors:normalizePersonList(editors)};}
-function extractMarcIsbn(value){
-  const matches=String(value||'').match(/97[89][0-9Xx -]{10,20}|[0-9][0-9Xx -]{8,16}/g)||[];
-  return matches.map(match=>normalizeISBN(match.trim())).filter(isbn=>isbn&&isValidISBN(isbn)).map(toISBN13);
-}
 function marcIsbns(record){return uniq(marcDatafields(record,'020').flatMap(field=>marcSubfields(field,'a')).flatMap(extractMarcIsbn));}
 function marcPrimaryAuthor(record){
   const field=marcDatafields(record,'100')[0];if(!field)return'';
@@ -1121,7 +1110,6 @@ function createNativeBarcodeDetector(){
   catch{try{return new window.BarcodeDetector();}catch{return null;}}
 }
 function formatLocationSummary(location){const l=normalizeLocation(location);return [l.room,l.bookcase,l.shelf&&`Shelf ${l.shelf}`,l.box&&`Box ${l.box}`].filter(Boolean).join(' / ')||'No default location';}
-function normalizeScannedCode(value){return normalizeISBN(String(value||'').replace(/^ISBN(?:-1[03])?:?/i,''));}
 function hardwareScannerCode(buffer,startedAt,now=Date.now()){const code=normalizeScannedCode(buffer);return startedAt&&now-startedAt<=1200&&isValidISBN(code)?code:'';}
 function cameraBarcodeFrame(entries,value,now=Date.now()){
   const code=normalizeScannedCode(value);

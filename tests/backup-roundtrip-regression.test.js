@@ -7,6 +7,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 
 const html=require('./load-production-source');
+const isbnSource=require('./load-production-isbn-source');
 const slice=(start,end)=>{
   const from=html.indexOf(start),to=html.indexOf(end,from);
   assert.ok(from>=0&&to>from,`Could not extract ${start}`);
@@ -23,7 +24,7 @@ function genId(){return 'generated-'+(++generatedId);}
 function normalizedTitle(value){return String(value||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();}
 `;
 
-const source=runtime+
+const source=runtime+isbnSource+
   slice('function uniq','const FORMAT_OPTIONS')+
   slice('function blankLocation','function locationText')+
   slice('function normalizeSettings','const BACKUP_HEALTH')+

@@ -9,6 +9,7 @@ const suites=[
   'visual-browse.test.js',
   'library-browse-refinement.test.js',
   'core-model-regression.test.js',
+  'isbn-regression.test.js',
   'scan-regression.test.js',
   'backup-roundtrip-regression.test.js',
   'location-regression.test.js',

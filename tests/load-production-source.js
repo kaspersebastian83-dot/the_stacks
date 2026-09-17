@@ -5,8 +5,16 @@ const fs=require('node:fs');
 const path=require('node:path');
 
 const root=path.join(__dirname,'..');
-module.exports=[
-  fs.readFileSync(path.join(root,'index.html'),'utf8'),
-  fs.readFileSync(path.join(root,'src','styles.css'),'utf8'),
-  fs.readFileSync(path.join(root,'src','App.jsx'),'utf8')
-].join('\n');
+const srcRoot=path.join(root,'src');
+const sourceExtensions=new Set(['.js','.jsx','.mjs','.css']);
+
+function productionSourceFiles(directory){
+  return fs.readdirSync(directory,{withFileTypes:true}).flatMap(entry=>{
+    const file=path.join(directory,entry.name);
+    if(entry.isDirectory())return productionSourceFiles(file);
+    return sourceExtensions.has(path.extname(entry.name))?[file]:[];
+  });
+}
+
+const files=[path.join(root,'index.html'),...productionSourceFiles(srcRoot)].sort((a,b)=>a.localeCompare(b));
+module.exports=files.map(file=>fs.readFileSync(file,'utf8')).join('\n');

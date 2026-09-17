@@ -7,6 +7,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 
 const html=require('./load-production-source');
+const isbnSource=require('./load-production-isbn-source');
 const slice=(start,end)=>{
   const from=html.indexOf(start),to=html.indexOf(end,from);
   assert.ok(from>=0&&to>from,`Could not extract ${start}`);
@@ -28,7 +29,7 @@ function safeLocalSet(){throw new Error('Unexpected real localStorage write');}
 function safeJSONParse(raw,fallback=null){try{return raw?JSON.parse(raw):fallback}catch{return fallback}}
 `;
 
-const source=runtime+
+const source=runtime+isbnSource+
   slice('function uniq','const FORMAT_OPTIONS')+
   slice('function blankLocation','function locationText')+
   slice('function normalizeSettings','const BACKUP_HEALTH')+

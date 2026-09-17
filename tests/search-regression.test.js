@@ -8,6 +8,7 @@ const vm=require('node:vm');
 const {performance}=require('node:perf_hooks');
 
 const html=require('./load-production-source');
+const isbnSource=require('./load-production-isbn-source');
 const slice=(start,end)=>{
   const from=html.indexOf(start),to=html.indexOf(end,from);
   assert.ok(from>=0&&to>from,`Could not extract ${start}`);
@@ -33,7 +34,6 @@ function metadataScore(){return 100;}
 function workGroups(){return [];}
 function workKeyForBook(book){return book.workId||'';}
 `;
-const isbnSource=slice('function normalizeISBN','function statusLabel');
 const searchSource=slice('function stripQuotes','function csvEscape');
 const browseSource=slice('function filterLibraryBrowseIndex','function filterLibraryBrowseBooks');
 const context=vm.createContext({console});
