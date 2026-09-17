@@ -96,8 +96,8 @@ assert.match(html,/@media\(max-width:768px\)/);
 assert.match(html,/@media\(max-width:430px\)/);
 assert.match(html,/@media\(max-width:390px\)/);
 assert.match(html,/No physical copies in this group match the current Library filters\./);
-assert.match(html,/APP_VERSION='3\.9\.12'/);
-assert.match(html,/<title>The Stacks &middot; Book Catalog v3\.9\.12<\/title>/);
+assert.match(html,/APP_VERSION='3\.9\.13'/);
+assert.match(html,/<title>The Stacks &middot; Book Catalog v3\.9\.13<\/title>/);
 
 console.log('LIBRARY_BROWSE_REFINEMENT_FIXTURE_PASS');
 console.log('Work/Edition/Copy counts, exact-Copy subsets, and series ordering: PASS');

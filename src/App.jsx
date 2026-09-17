@@ -1,4 +1,5 @@
 import React,{useEffect,useMemo,useRef,useState} from "react";
+import {BrowserMultiFormatOneDReader} from "@zxing/browser";
 
 const BOOKS_KEY='bookCatalog:library:v1';
 const NATIVE_CATALOG_KEY='bookCatalog:nativeCatalog:v1';
@@ -13,13 +14,14 @@ const STORAGE_MODE_KEY='bookCatalog:storageMode:v1';
 const IDB_NAME='the-stacks-catalog-db';
 const IDB_VERSION=1;
 const IDB_STORE='kv';
-const APP_VERSION='3.9.12';
+const APP_VERSION='3.9.13';
 const DEFAULT_SETTINGS={theme:'light',defaultStatus:'unread',defaultCollection:'',defaultLocation:blankLocation(),confirmDestructive:true,autoJsonSnapshot:true,backupReminderDays:14,compactMobile:false,showShortcutHints:true,preferGoogleBooksFallback:true};
 const STATUS=[
   ['unread','Unread'],['want','Want to read'],['reading','Currently reading'],['read','Read'],['dnf','Did not finish'],['reference','Reference only']
 ];
 const STATUS_LABEL=Object.fromEntries(STATUS);
 const CHANGELOG=[
+  {version:'3.9.13',date:'2026-09-17',items:['Added iPhone-compatible camera barcode scanning with a bundled fallback decoder while preserving the existing native scan and physical-copy workflow.']},
   {version:'3.9.12',date:'2026-09-17',items:['Added automated regression coverage and continuous safety checks for catalog identity, physical Copies, search, browsing, locations, scanning, and backup/restore behavior.']},
   {version:'3.9.11',date:'2026-09-16',items:['Refined Authors, Series, and Subjects browsing with clearer Work/Copy counts, alphabetical exploration, richer detail views, and direct Visual Browse for selected library subsets.']},
   {version:'3.9.10',date:'2026-09-16',items:['Added Visual Browse, an immersive cover-first way to flip through filtered physical books with swipe, keyboard, and perspective navigation.']},
@@ -1111,63 +1113,82 @@ function Sidebar({books,collections,activeView,setActiveView,activeCollection,se
 
 
 function isBarcodeDetectorAvailable(){return typeof window!=='undefined'&&'BarcodeDetector' in window;}
+function isCameraAccessAvailable(){return typeof navigator!=='undefined'&&!!navigator.mediaDevices?.getUserMedia;}
+function selectCameraDecoder(nativeAvailable,nativeInitialized){return nativeAvailable&&nativeInitialized?'native':'zxing';}
+function createNativeBarcodeDetector(){
+  if(!isBarcodeDetectorAvailable())return null;
+  try{return new window.BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e']});}
+  catch{try{return new window.BarcodeDetector();}catch{return null;}}
+}
 function formatLocationSummary(location){const l=normalizeLocation(location);return [l.room,l.bookcase,l.shelf&&`Shelf ${l.shelf}`,l.box&&`Box ${l.box}`].filter(Boolean).join(' / ')||'No default location';}
 function normalizeScannedCode(value){return normalizeISBN(String(value||'').replace(/^ISBN(?:-1[03])?:?/i,''));}
 function hardwareScannerCode(buffer,startedAt,now=Date.now()){const code=normalizeScannedCode(buffer);return startedAt&&now-startedAt<=1200&&isValidISBN(code)?code:'';}
+function cameraBarcodeFrame(entries,value,now=Date.now()){
+  const code=normalizeScannedCode(value);
+  entries.forEach((entry,key)=>{if(key!==code&&now-entry.lastSeen>1200)entry.released=true;});
+  if(!code)return{code:'',accepted:false};
+  const entry=entries.get(code)||{lastSeen:0,acceptedAt:0,released:true};
+  const accepted=entry.released&&(!entry.acceptedAt||now-entry.acceptedAt>1200);
+  entry.lastSeen=now;
+  if(accepted){entry.released=false;entry.acceptedAt=now;}
+  entries.set(code,entry);
+  return{code,accepted};
+}
 function scanStateLabel(state){return {added:'New book',copy:'Physical copy',review:'Needs review',invalid:'Invalid ISBN',error:'Scan failed',sent:'Processed'}[state]||'Processed';}
 function scanSourceLabel(source){return {manual:'Single scan',batch:'Batch',camera:'Camera'}[source]||String(source||'Scan');}
 function CameraBarcodeScanner({active,onDetected,onStop,minimal=false,onInvalidDetected,onUnavailable}){
-  const videoRef=useRef(null);const streamRef=useRef(null);const rafRef=useRef(null);const barcodeRef=useRef(new Map());
+  const videoRef=useRef(null);const streamRef=useRef(null);const rafRef=useRef(null);const decoderControlsRef=useRef(null);const decoderReaderRef=useRef(null);const barcodeRef=useRef(new Map());
   const [state,setState]=useState({status:'idle',message:'Camera stopped'});
   useEffect(()=>{
     let cancelled=false;
+    const stopDecoder=()=>{if(rafRef.current){cancelAnimationFrame(rafRef.current);rafRef.current=null;}if(decoderControlsRef.current){decoderControlsRef.current.stop();decoderControlsRef.current=null;}decoderReaderRef.current=null;};
+    const stopStream=()=>{if(streamRef.current){streamRef.current.getTracks().forEach(track=>track.stop());streamRef.current=null;}if(videoRef.current)videoRef.current.srcObject=null;};
+    const handleFrame=value=>{
+      if(cancelled)return;
+      const frame=cameraBarcodeFrame(barcodeRef.current,value);
+      if(!frame.accepted)return;
+      const valid=isValidISBN(frame.code);
+      setState({status:valid?'found':'scanning',message:valid?`Scanned ${toISBN13(frame.code)}. Adding…`:'That does not look like a book barcode.'});
+      if(!valid)onInvalidDetected?.(frame.code);
+      Promise.resolve(onDetected?.(frame.code)).catch(()=>{const message='The book could not be added. Use the Scan Desk instead.';setState({status:'error',message});onUnavailable?.(message);}).finally(()=>{if(!cancelled)setState({status:'scanning',message:'Point the camera at the ISBN barcode.'});});
+    };
     async function start(){
       if(!active)return;
-      if(!navigator.mediaDevices?.getUserMedia){const message='Camera access is not available in this browser. Use the Scan Desk instead.';setState({status:'error',message});onUnavailable?.(message);return;}
-      if(!isBarcodeDetectorAvailable()){const message='This browser cannot read barcodes with the camera. Use the Scan Desk instead.';setState({status:'error',message});onUnavailable?.(message);return;}
+      barcodeRef.current.clear();
+      if(!isCameraAccessAvailable()){const message='Camera access is not available on this device. Use a barcode scanner instead.';setState({status:'error',message});onUnavailable?.(message);return;}
       try{
         setState({status:'starting',message:'Requesting camera permission…'});
-        let detector;
-        try{detector=new window.BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e']});}catch{detector=new window.BarcodeDetector();}
         const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
         if(cancelled){stream.getTracks().forEach(t=>t.stop());return;}
         streamRef.current=stream;
         if(videoRef.current){videoRef.current.srcObject=stream;await videoRef.current.play().catch(()=>{});}
+        const detector=createNativeBarcodeDetector();
+        const decoderKind=selectCameraDecoder(isBarcodeDetectorAvailable(),!!detector);
         setState({status:'scanning',message:'Point the camera at the ISBN barcode.'});
-        const loop=async()=>{
-          if(cancelled||!active)return;
-          const video=videoRef.current;
-          if(video&&video.readyState>=2){
-            try{
-              const codes=await detector.detect(video);
-              const code=normalizeScannedCode(codes?.[0]?.rawValue);
-              const now=Date.now();
-              barcodeRef.current.forEach((entry,key)=>{if(key!==code&&now-entry.lastSeen>1200)entry.released=true;});
-              if(code){
-                const entry=barcodeRef.current.get(code)||{lastSeen:0,acceptedAt:0,released:true};
-                const canAccept=entry.released&&now-entry.acceptedAt>1200;
-                entry.lastSeen=now;
-                barcodeRef.current.set(code,entry);
-                if(canAccept){
-                  entry.released=false;entry.acceptedAt=now;
-                  if(isValidISBN(code)){
-                    setState({status:'found',message:`Scanned ${toISBN13(code)}. Adding…`});
-                    Promise.resolve(onDetected?.(code)).catch(()=>{const message='The book could not be added. Use the Scan Desk instead.';setState({status:'error',message});onUnavailable?.(message);}).finally(()=>{if(!cancelled)setState({status:'scanning',message:'Point the camera at the ISBN barcode.'});});
-                  }else{
-                    setState({status:'scanning',message:'That does not look like a book barcode.'});
-                    onInvalidDetected?.(code);
-                  }
-                }
-              }
-            }catch{/* Keep the camera loop alive after a detector frame fails. */}
-          }
+        if(decoderKind==='native'){
+          const loop=async()=>{
+            if(cancelled||!active)return;
+            const video=videoRef.current;
+            if(video&&video.readyState>=2){try{const codes=await detector.detect(video);handleFrame(codes?.[0]?.rawValue||'');}catch{/* Keep scanning after a single native detector frame fails. */}}
+            if(!cancelled)rafRef.current=requestAnimationFrame(loop);
+          };
           rafRef.current=requestAnimationFrame(loop);
-        };
-        rafRef.current=requestAnimationFrame(loop);
-      }catch(err){const message=err?.name==='NotAllowedError'?'Camera permission was denied. Allow camera access or use the Scan Desk instead.':`Camera could not start: ${err?.message||'unknown error'}`;setState({status:'error',message});onUnavailable?.(message);}
+        }else{
+          try{
+            const reader=new BrowserMultiFormatOneDReader(undefined,{delayBetweenScanAttempts:100,delayBetweenScanSuccess:100});
+            decoderReaderRef.current=reader;
+            const controls=await reader.decodeFromVideoElement(videoRef.current,(result)=>handleFrame(result?.getText?.()||''));
+            if(cancelled)controls.stop();else decoderControlsRef.current=controls;
+          }catch{const decoderError=new Error('Camera barcode decoder initialization failed');decoderError.cameraDecoderFailure=true;throw decoderError;}
+        }
+      }catch(err){
+        stopDecoder();stopStream();
+        const message=err?.name==='NotAllowedError'?'Camera permission was denied. Allow camera access and try again.':err?.name==='NotFoundError'||err?.name==='NotReadableError'?'The camera is unavailable or already in use.':err?.cameraDecoderFailure?'The camera barcode reader could not start. Try again or use a barcode scanner.':'The camera could not start. Try again or use a barcode scanner.';
+        setState({status:'error',message});onUnavailable?.(message);
+      }
     }
     start();
-    return()=>{cancelled=true;if(rafRef.current)cancelAnimationFrame(rafRef.current);if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}if(videoRef.current)videoRef.current.srcObject=null;};
+    return()=>{cancelled=true;stopDecoder();stopStream();barcodeRef.current.clear();};
   },[active]);
   const label=state.status==='scanning'?'Scanning':state.status==='found'?'Adding book':state.status==='error'?'Camera needs help':'Starting camera';
   return <div className={'camera-box '+(minimal?'camera-minimal':'')}><div className="camera-preview-wrap"><video ref={videoRef} playsInline muted className="camera-preview"/><div className="scan-frame" aria-hidden="true">{minimal&&<><div className="easy-target-book"><Icon name="book" size={42}/></div><div className="easy-target-bars"/></>}</div>{!minimal&&<div className="camera-badge">{label}</div>}</div>{!minimal&&<div className="camera-status"><span className={state.status==='error'?'badge bad':'badge'}>{state.message}</span><button className="ghost" onClick={onStop}>Stop camera</button></div>}</div>;
@@ -1267,7 +1288,7 @@ function ScanDesk({books,collections,onScan,onAddManual,onEdit,onDeleteIds,onSor
   return <div className="workspace grid2"><section className="panel panel-pad"><div className="overline">Scan Desk</div><h1 className="title">Batch book intake</h1><p className="subtitle">Scan one ISBN, run the camera continuously, or paste a whole list of ISBNs. New scans use the selected collection and default location below.</p>
     <div className="scan-session-card"><div><b>Current intake target</b><div className="small">Collection: <span className="mono">{destination||'Unshelved'}</span> · Location: <span className="mono">{formatLocationSummary(defaultLoc)}</span></div><div className="small">Mode: <span className="mono">{batchRunning?'Processing batch':cameraOn?'Continuous camera scan':'Single scan / hardware scanner'}</span>{lastResult?` · Last: ${scanStateLabel(lastResult.state)} ${lastResult.title||lastResult.code} at ${lastResult.time}`:''}</div></div><div className="row-actions">{sessionCopyIds.length>0&&<button className="btn" onClick={()=>onSortSession?.(sessionCopyIds)}>Sort session</button>}<button className="ghost" onClick={()=>{setSession({sent:0,added:0,copy:0,review:0,invalid:0});setLastResult(null);setRecentScans([]);setDestination('');}}>Reset session</button></div></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:10,marginTop:18}}><input ref={inputRef} className="field mono" style={{fontSize:20,padding:14}} value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();submit()}}} placeholder="Scan, type, or paste one ISBN…"/><button className="btn" onClick={submit}>Add</button></div>
-    <div className="quick-actions" style={{marginTop:10}}><button className="btn" onClick={()=>setCameraOn(true)} disabled={cameraOn}>{cameraOn?'Camera active':'Start continuous camera scan'}</button><button className="ghost" onClick={onAddManual}><Icon name="plus" size={14}/>Manual entry</button><span className="small" style={{alignSelf:'center'}}>{isBarcodeDetectorAvailable()?'Camera barcode scanning available':'Camera barcode scanning may not be supported in this browser'}</span></div>
+    <div className="quick-actions" style={{marginTop:10}}><button className="btn" onClick={()=>setCameraOn(true)} disabled={cameraOn}>{cameraOn?'Camera active':'Start continuous camera scan'}</button><button className="ghost" onClick={onAddManual}><Icon name="plus" size={14}/>Manual entry</button><span className="small" style={{alignSelf:'center'}}>{isCameraAccessAvailable()?'Camera barcode scanning available':'Camera access is not supported in this browser'}</span></div>
     {cameraOn&&<CameraBarcodeScanner active={cameraOn} onDetected={code=>runScan(code,'camera')} onStop={()=>setCameraOn(false)}/>}
     <div className="batch-scan-panel"><div><div className="label">Batch ISBN intake</div><textarea ref={batchRef} className="field mono" value={batchText} onChange={e=>setBatchText(e.target.value)} placeholder={'Paste ISBNs here — one per line, or separated by spaces / commas / semicolons.\n9780140449136\n9780261103573\n9780307277671'} /></div><div className="batch-scan-meta"><span className="batch-scan-count">{validBatchCodes.length} valid ISBN{validBatchCodes.length===1?'':'s'} ready{invalidBatchCount>0?` · ${invalidBatchCount} invalid token${invalidBatchCount===1?'':'s'} will be reported`:''}</span><div className="row-actions"><button className="ghost" onClick={()=>setBatchText('')} disabled={!batchText||batchRunning}>Clear</button><button className="btn" onClick={runBatch} disabled={!allBatchCodes.length||batchRunning}>{batchRunning?'Processing batch…':'Process batch'}</button></div></div><div className="small">Repeated ISBNs are processed as additional physical copies. Set the destination collection and default location first, then scan or paste all ISBNs from that physical shelf.</div></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:12}}><label><div className="label">Destination collection</div><select className="select" value={destination} onChange={e=>setDestination(e.target.value)}><option value="">Unshelved</option>{collections.map(c=><option key={c} value={c}>{c}</option>)}</select></label><label><div className="label">Default workflow</div><div className="select" style={{background:'#f6fbff'}}>Status: {statusLabel(settings?.defaultStatus||'unread')} · Review if incomplete</div></label></div>

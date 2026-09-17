@@ -43,15 +43,42 @@ const source=runtime+
   slice('function isUnidentifiedTitle','function reviewReasons')+
   slice('function metadataQuality','function normalizeMetadataCandidate')+
   slice('const METADATA_FIELD_DEFS','function identificationTargetIdentity')+
+  slice('function isBarcodeDetectorAvailable','function scanStateLabel')+
   slice('function insertScannedBook','function currentCatalogPayload')+
   slice('async function processScan','async function processEasyScan')+
-  `;nativeCatalogRef.current=blankNativeCatalog();globalThis.api={processScan,applyMetadataToBook,getBooks:()=>booksRef.current,getEditing:()=>editing};`;
+  `;nativeCatalogRef.current=blankNativeCatalog();globalThis.api={processScan,applyMetadataToBook,selectCameraDecoder,createNativeBarcodeDetector,cameraBarcodeFrame,getBooks:()=>booksRef.current,getEditing:()=>editing,resetCatalog:()=>{booksRef.current=[];nativeCatalogRef.current=blankNativeCatalog();editing=null;}};`;
 
-const context=vm.createContext({console,Date,Map,Set,Math,Object});
+const context=vm.createContext({console,Date,Map,Set,Math,Object,window:{}});
 vm.runInContext(source,context);
 const api=context.api;
 
 (async()=>{
+  context.window.BarcodeDetector=class SyntheticBarcodeDetector{};
+  assert.ok(api.createNativeBarcodeDetector() instanceof context.window.BarcodeDetector);
+  assert.equal(api.selectCameraDecoder(true,true),'native','Usable native BarcodeDetector is preferred');
+  delete context.window.BarcodeDetector;
+  assert.equal(api.selectCameraDecoder(false,false),'zxing','Missing native BarcodeDetector selects the ZXing fallback');
+  context.window.BarcodeDetector=class FailingBarcodeDetector{constructor(){throw new Error('unsupported');}};
+  assert.equal(api.createNativeBarcodeDetector(),null,'A recoverable native initialization failure is detected');
+  assert.equal(api.selectCameraDecoder(true,false),'zxing','Native initialization failure selects the ZXing fallback');
+
+  const cameraFrames=new Map();
+  const accepted=[];
+  const frame=async(value,now)=>{const result=api.cameraBarcodeFrame(cameraFrames,value,now);if(!result.accepted)return null;accepted.push(result.code);return api.processScan(result.code,{quiet:true,silentReview:true});};
+  assert.equal((await frame('9780140449112',1000)).state,'added');
+  assert.equal(await frame('9780140449112',1100),null);
+  assert.equal(await frame('9780140449112',1500),null,'Consecutive frames do not create duplicate scans');
+  assert.equal(api.getBooks().length,1,'One continuously visible barcode enters processScan once');
+  assert.equal(accepted.length,1,'One continuously visible barcode emits one scan event');
+  await frame('',2801);
+  assert.equal((await frame('9780140449112',2802)).state,'copy','Released barcode can enter processScan again');
+  assert.equal((await frame('9780306406157',2850)).state,'review','A different barcode is accepted immediately');
+  const beforeInvalidCameraScan=JSON.stringify(api.getBooks());
+  assert.equal((await frame('9780140449113',2900)).state,'invalid','Invalid decoded ISBN is rejected by processScan');
+  assert.equal(JSON.stringify(api.getBooks()),beforeInvalidCameraScan,'Invalid decoded ISBN does not mutate the catalog');
+  assert.deepEqual(accepted,['9780140449112','9780140449112','9780306406157','9780140449113']);
+  api.resetCatalog();
+
   const validIsbn='9780140449112';
   const firstResult=await api.processScan(validIsbn,{quiet:true});
   assert.equal(firstResult.state,'added');
@@ -101,6 +128,8 @@ const api=context.api;
   assert.equal(JSON.stringify(unidentifiedResult.book),unidentifiedBefore,'Identification normalization must not mutate the source Copy');
 
   console.log('SCAN_REGRESSION_PASS');
+  console.log('Native decoder selection, ZXing fallback selection, and recoverable native initialization: PASS');
+  console.log('Continuous-frame suppression, release/rescan, and different-code acceptance: PASS');
   console.log('Repeated valid ISBN scans create independent Copies with stable Work and Edition identity: PASS');
   console.log('Invalid ISBN and Needs Identification lifecycle: PASS');
 })().catch(error=>{console.error(error.stack||error);process.exitCode=1;});
