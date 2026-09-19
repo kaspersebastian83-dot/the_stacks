@@ -37,7 +37,7 @@ const source=runtime+
   slice('function stripQuotes','function csvEscape')+
   slice('function filterBooks','const BUILTIN_VIEWS')+
   slice('function visualBrowseWindow','function VisualBrowseView')+
-  `;globalThis.api={defaultFilters,getLibraryVisibleBooks,visualBrowseWindow,visualBrowseActiveId,visualBrowseMove,visualBrowseSwipeStep,editionCopyContext,visualBrowsePositionClass,openVisualBrowseBook};`;
+  `;globalThis.api={defaultFilters,getLibraryVisibleBooks,sortLibraryBooks,sortBooksByPhysicalLocation,visualBrowseWindow,visualBrowseActiveId,visualBrowseMove,visualBrowseSwipeStep,editionCopyContext,visualBrowsePositionClass,openVisualBrowseBook};`;
 const context=vm.createContext({console});
 vm.runInContext(source,context);
 const api=context.api;
@@ -88,8 +88,40 @@ const browseOrder=visible(filters({query:'ai driven leader'})).map(item=>item.id
 assert.deepEqual(booksOrder,browseOrder);
 assert.equal(booksOrder[0],'copy-0');
 
+const locationFixture=[
+  book(100,{id:'missing-zulu',copyId:'missing-zulu',title:'Zulu Missing',location:{room:'',bookcase:'',shelf:'',box:'',position:''}}),
+  book(101,{id:'copy-bookcase-10',copyId:'copy-bookcase-10',workId:'shared-location-work',editionId:'shared-location-edition',title:'Bookcase Ten',location:{room:'Room 1',bookcase:'Bookcase 10',shelf:'Shelf 2',box:'Box 1',position:'1'}}),
+  book(102,{id:'copy-shelf-10',copyId:'copy-shelf-10',title:'Shelf Ten',location:{room:'Room 1',bookcase:'Bookcase 2',shelf:'Shelf 10',box:'Box 1',position:'1'}}),
+  book(103,{id:'copy-box-10',copyId:'copy-box-10',title:'Box Ten',location:{room:'Room 1',bookcase:'Bookcase 2',shelf:'Shelf 2',box:'Box 10',position:'1'}}),
+  book(104,{id:'copy-position-10',copyId:'copy-position-10',title:'Position Ten',location:{room:'Room 1',bookcase:'Bookcase 2',shelf:'Shelf 2',box:'Box 2',position:'10'}}),
+  book(105,{id:'copy-z',copyId:'copy-z',title:'Zulu',location:{room:'Room 1',bookcase:'Bookcase 2',shelf:'Shelf 2',box:'Box 2',position:'2'}}),
+  book(106,{id:'copy-b',copyId:'copy-b',title:'Alpha',location:{room:'Room 1',bookcase:'Bookcase 2',shelf:'Shelf 2',box:'Box 2',position:'2'}}),
+  book(107,{id:'copy-a',copyId:'copy-a',workId:'shared-location-work',editionId:'shared-location-edition',title:'Alpha',location:{room:'Room 1',bookcase:'Bookcase 2',shelf:'Shelf 2',box:'Box 2',position:'2'}}),
+  book(108,{id:'copy-room-2',copyId:'copy-room-2',title:'Room Two',location:{room:'Room 2',bookcase:'Bookcase 1',shelf:'Shelf 1',box:'',position:''}}),
+  book(109,{id:'missing-alpha',copyId:'missing-alpha',title:'Alpha Missing',location:{room:'',bookcase:'',shelf:'',box:'',position:''}})
+];
+const locationFixtureBefore=JSON.stringify(locationFixture);
+const locationSorted=api.sortLibraryBooks(locationFixture,'physical-location');
+assert.deepEqual(locationSorted.map(item=>item.id),['copy-a','copy-b','copy-z','copy-position-10','copy-box-10','copy-shelf-10','copy-bookcase-10','copy-room-2','missing-alpha','missing-zulu']);
+assert.equal(JSON.stringify(locationFixture),locationFixtureBefore,'Physical-location sorting must not mutate source Copies');
+assert.notStrictEqual(locationSorted,locationFixture,'Physical-location sorting operates on a copied array');
+assert.ok(locationSorted.indexOf(locationFixture.find(item=>item.id==='copy-a'))<locationSorted.indexOf(locationFixture.find(item=>item.id==='copy-bookcase-10')),'Same-Edition Copies sort by their own locations');
+assert.strictEqual(api.sortLibraryBooks(locationFixture,'default'),locationFixture,'Default order preserves the exact existing array and order');
+const rankedDefault=api.getLibraryVisibleBooks(fixture,filters({query:'ai driven leader'}));
+assert.strictEqual(api.sortLibraryBooks(rankedDefault,'default'),rankedDefault,'Default mode preserves search relevance output');
+
+const filterFixture=[
+  book(110,{id:'bookcase-5-b-10',location:{room:'Study',bookcase:'Bookcase 5',shelf:'B',box:'',position:'10'}}),
+  book(111,{id:'bookcase-5-b-2',location:{room:'Study',bookcase:'Bookcase 5',shelf:'B',box:'',position:'2'}}),
+  book(112,{id:'bookcase-5-a',location:{room:'Study',bookcase:'Bookcase 5',shelf:'A',box:'',position:'1'}}),
+  book(113,{id:'bookcase-10-b',location:{room:'Study',bookcase:'Bookcase 10',shelf:'B',box:'',position:'1'}})
+];
+const filteredLocation=api.getLibraryVisibleBooks(filterFixture,filters({bookcase:'Bookcase 5',physicalShelf:'B'}));
+assert.deepEqual(api.sortLibraryBooks(filteredLocation,'physical-location').map(item=>item.id),['bookcase-5-b-2','bookcase-5-b-10'],'Existing Bookcase and Physical shelf filters apply before location sorting');
+
 const synthetic=Array.from({length:5000},(_,index)=>book(index,{id:`large-${index}`,copyId:`large-${index}`,title:index===4321?'The AI-Driven Leader':`Catalog Book ${index}`}));
 const start=performance.now();const largeVisible=api.getLibraryVisibleBooks(synthetic,filters({query:'catalog book'}));const filterMs=performance.now()-start;
+const locationSortStart=performance.now();const largeLocationSorted=api.sortLibraryBooks(largeVisible,'physical-location');const locationSortMs=performance.now()-locationSortStart;assert.equal(largeLocationSorted.length,largeVisible.length);
 const windowStart=performance.now();for(let index=0;index<5000;index+=37)assert.ok(api.visualBrowseWindow(largeVisible,index).length<=7);const windowMs=performance.now()-windowStart;
 
 assert.match(html,/onPointerCancel=\{pointerCancel\}/);
@@ -106,6 +138,9 @@ assert.match(html,/@media\(max-width:420px\)/);
 assert.match(html,/body\.theme-dark \.visual-browse-stage/);
 assert.match(html,/overflow-x:hidden/);
 assert.match(html,/touch-action:pan-y/);
+assert.match(html,/<option value="physical-location">Physical location<\/option>/);
+assert.match(html,/clean-row-location/);
+assert.match(html,/library-sort-control/);
 assert.match(html,/const modes=\[\['books','Books'\],\['browse','Browse'\]/);
 assert.match(html,/const NATIVE_CATALOG_MODEL='work-edition-copy-v1'/);
 assert.match(html,/schemaVersion:3/);
@@ -114,7 +149,8 @@ assert.doesNotMatch(slice('function VisualBrowseView','function LibraryView'),/l
 console.log('VISUAL_BROWSE_FIXTURE_PASS');
 console.log('Exact Copy and same-Edition multi-Copy regression: PASS');
 console.log('Books/Browse search and filter parity: PASS');
+console.log('Natural physical-location sorting, missing-last order, exact-Copy independence, and non-mutation: PASS');
 console.log('Keyboard, swipe threshold, vertical intent, and exact-open checks: PASS');
 console.log('Zero/one/two/three/small-window and cover containment checks: PASS');
 console.log('Responsive, dark-mode, and reduced-motion structural checks: PASS');
-console.log(`5,000-Copy filter/rank: ${filterMs.toFixed(2)} ms; window stepping: ${windowMs.toFixed(2)} ms; max mounted: 7`);
+console.log(`5,000-Copy filter/rank: ${filterMs.toFixed(2)} ms; location sort: ${locationSortMs.toFixed(2)} ms; window stepping: ${windowMs.toFixed(2)} ms; max mounted: 7`);
