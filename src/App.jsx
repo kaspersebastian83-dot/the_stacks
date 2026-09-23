@@ -15,13 +15,14 @@ const STORAGE_MODE_KEY='bookCatalog:storageMode:v1';
 const IDB_NAME='the-stacks-catalog-db';
 const IDB_VERSION=1;
 const IDB_STORE='kv';
-const APP_VERSION='3.9.17';
+const APP_VERSION='3.9.18';
 const DEFAULT_SETTINGS={theme:'light',defaultStatus:'unread',defaultCollection:'',defaultLocation:blankLocation(),confirmDestructive:true,autoJsonSnapshot:true,backupReminderDays:14,compactMobile:false,showShortcutHints:true,preferGoogleBooksFallback:true};
 const STATUS=[
   ['unread','Unread'],['want','Want to read'],['reading','Currently reading'],['read','Read'],['dnf','Did not finish'],['reference','Reference only']
 ];
 const STATUS_LABEL=Object.fromEntries(STATUS);
 const CHANGELOG=[
+  {version:'3.9.18',date:'2026-09-23',items:['Aligned partial Box locations and shelf labels across physical-library views, and made move undo refuse intervening Position changes.']},
   {version:'3.9.17',date:'2026-09-23',items:['Added exact-Copy Move actions and batch shelf moves, plus continuous Scan to Location with explicit Copy selection, session summary, and undo.']},
   {version:'3.9.16',date:'2026-09-23',items:['Added Bookcases browsing with Room → Bookcase → Shelf navigation, exact physical Copy inventories, and clear missing or incomplete location groups.']},
   {version:'3.9.15',date:'2026-09-23',items:['Added Find / Put Away for read-only ISBN ownership checks, exact physical Copy locations, and continuous scan-ready lookup.']},
@@ -165,9 +166,10 @@ const CONDITION_OPTIONS=['','New','Very good','Good','Acceptable','Damaged','Nee
 function todayISO(){return new Date().toISOString().slice(0,10);}
 function blankLocation(){return {room:'',bookcase:'',shelf:'',box:'',position:''};}
 function normalizeLocation(loc){if(!loc)return blankLocation();if(typeof loc==='string')return {room:loc,bookcase:'',shelf:'',box:'',position:''};return {...blankLocation(),...loc};}
-function locationText(book){const l=normalizeLocation(book.location);return [l.room,l.bookcase,l.shelf&&`Shelf ${l.shelf}`,l.box&&`Box ${l.box}`,l.position&&`#${l.position}`].filter(Boolean).join(' · ');}
-function hasUnassignedCoreLocation(location){const l=normalizeLocation(location);return ![l.room,l.bookcase,l.shelf].some(value=>String(value||'').trim());}
-function physicalLocationParts(location){const l=normalizeLocation(location);const named=(label,value)=>value?new RegExp('^'+label+'\\b','i').test(String(value))?String(value):label+' '+value:'';return {primary:[l.bookcase,named('Shelf',l.shelf)].filter(Boolean).join(' · '),secondary:[l.room,named('Box',l.box),l.position&&'#'+l.position].filter(Boolean).join(' · ')};}
+function namedLocationPart(label,value){const text=String(value||'').trim();return text?new RegExp('^'+label+'\\b','i').test(text)?text:label+' '+text:'';}
+function locationText(book){const l=normalizeLocation(book.location);return [l.room,l.bookcase,namedLocationPart('Shelf',l.shelf),namedLocationPart('Box',l.box),l.position&&`#${l.position}`].filter(Boolean).join(' · ');}
+function hasUnassignedCoreLocation(location){const l=normalizeLocation(location);return ![l.room,l.bookcase,l.shelf,l.box].some(value=>String(value||'').trim());}
+function physicalLocationParts(location){const l=normalizeLocation(location);return {primary:[l.bookcase,namedLocationPart('Shelf',l.shelf)].filter(Boolean).join(' · '),secondary:[l.room,namedLocationPart('Box',l.box),l.position&&'#'+l.position].filter(Boolean).join(' · ')};}
 function PhysicalLocation({location,compact=false}){const missing=hasUnassignedCoreLocation(location);const parts=physicalLocationParts(location);return <span className={'physical-location '+(compact?'compact ':'')+(missing?'missing':'')}><span className="physical-location-label">Location</span><strong>{missing?(compact?'Location not assigned':'⚠ Location not assigned'):parts.primary||parts.secondary}</strong>{!missing&&parts.primary&&parts.secondary&&<small>{parts.secondary}</small>}</span>;}
 function isLentOut(book){return Boolean(String(book.lentTo||'').trim()&&!book.returnedDate);}
 function isOverdue(book){return isLentOut(book)&&book.dueDate&&book.dueDate<todayISO();}
@@ -730,7 +732,7 @@ function moveExactCopiesInBooks(books=[],copyIds=[],destination=blankLocation(),
 }
 function undoExactCopyMoveInBooks(books=[],previous={},destination=blankLocation(),updatedAt=new Date().toISOString()){
   const ids=Object.keys(previous),byId=new Map((books||[]).filter(Boolean).map(book=>[String(book.copyId||book.id||''),book]));
-  if(!ids.length||ids.some(id=>!byId.has(id)||!sameLocation(byId.get(id).location,destination)))return {books,restored:0,conflict:true};
+  if(!ids.length||ids.some(id=>!byId.has(id)||!sameLocation(byId.get(id).location,destination)||normalizeLocation(byId.get(id).location).position!==normalizeLocation(previous[id]).position))return {books,restored:0,conflict:true};
   return {books:restoreCopyLocationsInBooks(books,previous,updatedAt),restored:ids.length,conflict:false};
 }
 function updateEntireLocationInBooks(books=[],from=blankLocation(),to=blankLocation(),updatedAt=new Date().toISOString()){from=normalizeLocation(from);to=normalizeLocation(to);let changed=0;const next=(books||[]).filter(Boolean).map(book=>{if(!sameLocation(book.location,from))return book;const old=normalizeLocation(book.location);changed++;return normalizeBook({...book,location:{room:to.room,bookcase:to.bookcase,shelf:to.shelf,box:to.box,position:old.position},updatedAt});});return {books:next,changed};}

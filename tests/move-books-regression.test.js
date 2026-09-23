@@ -132,6 +132,11 @@ assert.deepEqual({...byId(undone.books,'copy-a').location},loc('Study','Bookcase
 assert.deepEqual({...byId(undone.books,'copy-c').location},loc());
 const conflicting=api.undoExactCopyMoveInBooks(selected.books,single.previous,dest);
 assert.equal(conflicting.conflict,true,'Undo refuses to overwrite a Copy that moved elsewhere');
+const positionChanged=api.moveExactCopiesInBooks(views,['copy-a'],dest,'2026-09-23T00:00:00.000Z');
+const interveningPosition=positionChanged.books.map(book=>book.copyId==='copy-a'?{...book,location:{...book.location,position:'99'}}:book);
+const unsafeUndo=api.undoExactCopyMoveInBooks(interveningPosition,positionChanged.previous,dest);
+assert.equal(unsafeUndo.conflict,true,'Undo refuses to overwrite an intervening Position change');
+assert.strictEqual(unsafeUndo.books,interveningPosition);
 
 const reloaded=JSON.parse(JSON.stringify(movedCatalog));
 assert.equal(api.lookupOwnedISBN(reloaded,'9780140449112').copies.find(item=>item.copy.id==='copy-a').copy.location.room,'Living room','Serialized native catalog reload retains move');

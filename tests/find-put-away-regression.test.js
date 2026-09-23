@@ -62,11 +62,12 @@ assert.equal(lookupOwnedISBN(fixture,'9780140449113').state,'invalid');
 assert.equal(JSON.stringify(fixture),before,'Owned, unknown, and invalid lookup are read-only');
 assert.equal(fixture.copies.length,3,'Lookup never creates another Copy');
 
-const missing={room:'',bookcase:'',shelf:'',box:'Box 4',position:''};
-assert.equal(hasUnassignedCoreLocation(missing),true,'Box alone does not assign Room, Bookcase, or Shelf');
+const partial={room:'',bookcase:'',shelf:'',box:'Box 4',position:''};
+assert.equal(hasUnassignedCoreLocation(partial),false,'Box-only location is partial, not unassigned');
+assert.equal(hasUnassignedCoreLocation({room:'',bookcase:'',shelf:'',box:'',position:''}),true,'Completely blank location is unassigned');
 assert.equal(physicalLocationParts(fixture.copies[0].location).primary,'Bookcase 2 · Shelf 4');
 assert.equal(hasUnassignedCoreLocation(fixture.copies[0].location),false);
-const missingFixture={...fixture,copies:[{...fixture.copies[0],id:'copy-missing',location:missing}]};
+const missingFixture={...fixture,copies:[{...fixture.copies[0],id:'copy-missing',location:{room:'',bookcase:'',shelf:'',box:'',position:''}}]};
 const missingResult=lookupOwnedISBN(missingFixture,'9780140449112');
 assert.equal(missingResult.state,'owned');
 assert.equal(hasUnassignedCoreLocation(missingResult.copies[0].copy.location),true);

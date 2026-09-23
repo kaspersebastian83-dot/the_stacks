@@ -15,10 +15,10 @@ const code=
   slice('function blankLocation','function PhysicalLocation')+
   slice('function compareNaturalLocationValue','function physicalLocationSortEntry')+
   slice('function buildBookcaseNavigationIndex','function LibraryBrowseTabs')+
-  ';globalThis.api={buildBookcaseNavigationIndex,hasUnassignedCoreLocation};';
+  ';globalThis.api={buildBookcaseNavigationIndex,hasUnassignedCoreLocation,locationText};';
 const context=vm.createContext({Map,Set});
 vm.runInContext(code,context);
-const {buildBookcaseNavigationIndex,hasUnassignedCoreLocation}=context.api;
+const {buildBookcaseNavigationIndex,hasUnassignedCoreLocation,locationText}=context.api;
 
 const location=(room='',bookcase='',shelf='')=>({room,bookcase,shelf,box:'',position:''});
 const fixture={
@@ -51,6 +51,12 @@ assert.deepEqual(ids(study.bookcases[1].shelves[0].copies),['copy-c'],'Another E
 assert.deepEqual(ids(index.missing),['copy-e']);
 assert.deepEqual(ids(index.partial),['copy-f','copy-g']);
 assert.equal(hasUnassignedCoreLocation(fixture.copies[4].location),true,'Use the same missing-location rule as Find / Put Away');
+const boxOnly={copies:[{id:'copy-box-only',location:{room:'',bookcase:'',shelf:'',box:'Box 1',position:''}}]};
+const boxOnlyIndex=buildBookcaseNavigationIndex(boxOnly);
+assert.equal(hasUnassignedCoreLocation(boxOnly.copies[0].location),false,'A Box-only Copy has a partial, not blank, location');
+assert.deepEqual(ids(boxOnlyIndex.partial),['copy-box-only']);
+assert.equal(boxOnlyIndex.missing.length,0);
+assert.equal(locationText({location:{room:'Office',bookcase:'Bookcase 1',shelf:'Shelf 2',box:'Box 3',position:''}}),'Office · Bookcase 1 · Shelf 2 · Box 3','Location summaries must not repeat Shelf or Box labels');
 assert.equal(JSON.stringify(fixture),before,'Read-only hierarchy derivation must not mutate native catalog data');
 
 const moved=JSON.parse(JSON.stringify(fixture));
