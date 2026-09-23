@@ -19,6 +19,7 @@ const suites=[
   'visual-bookcase-regression.test.js',
   'move-books-regression.test.js',
   'physical-library-integration.test.js',
+  'physical-location-migration.test.js',
   'storage-mode-regression.test.js',
   'reset-safety-regression.test.js'
 ];

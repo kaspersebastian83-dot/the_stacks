@@ -64,7 +64,7 @@ assert.match(source,/visual-copy-title/,'spine title remains visible and can be 
 assert.match(source,/Locate on Shelf/,'selected Copy exposes a physical-location action');
 assert.match(source,/aria-pressed=\{isSelected\}/,'selection state is available to assistive technology');
 assert.match(source,/role="Selected physical Copy"|aria-label="Selected physical Copy"/);
-assert.match(source,/bookcaseUnassignedShelfCopies\(index\.partial/,'copies without a Shelf are never assigned to one');
+assert.match(source,/\[\.\.\.index\.missing,\.\.\.index\.partial\]/,'copies without a Shelf remain visible in the Visual Bookcase attention tray');
 const presentationSource=source.slice(source.indexOf('function visualBookPresentation'),source.indexOf('function LibraryBrowseTabs'));
 assert.doesNotMatch(presentationSource,/Math\.random|crypto\.random|Date\.now/,'visual identity never uses random or time-varying values');
 assert.match(source,/@media\(max-width:700px\)/,'mobile changes spine labels to readable horizontal cards');

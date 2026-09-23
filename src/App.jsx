@@ -16,13 +16,14 @@ const STORAGE_MODE_KEY='bookCatalog:storageMode:v1';
 const IDB_NAME='the-stacks-catalog-db';
 const IDB_VERSION=1;
 const IDB_STORE='kv';
-const APP_VERSION='3.10.2';
+const APP_VERSION='3.10.3';
 const DEFAULT_SETTINGS={theme:'light',defaultStatus:'unread',defaultCollection:'',defaultLocation:blankLocation(),confirmDestructive:true,autoJsonSnapshot:true,backupReminderDays:14,compactMobile:false,showShortcutHints:true,preferGoogleBooksFallback:true};
 const STATUS=[
   ['unread','Unread'],['want','Want to read'],['reading','Currently reading'],['read','Read'],['dnf','Did not finish'],['reference','Reference only']
 ];
 const STATUS_LABEL=Object.fromEntries(STATUS);
 const CHANGELOG=[
+  {version:'3.10.3',date:'2026-09-23',items:['Unified scanning, My Copy, and physical Bookcase placement around Copy.location, with automatic recovery of existing Bookcase and Shelf data.']},
   {version:'3.10.2',date:'2026-09-23',items:['Polished Visual Bookcase with deterministic muted spines, clearer shelf structure, and a selected-Copy details and actions panel.']},
   {version:'3.10.1',date:'2026-09-23',items:['Added a visual physical Bookcase view with exact-Copy shelf cards and direct Move and Scan to Shelf actions.']},
   {version:'3.10.0',date:'2026-09-23',items:['Added full-library CSV and privacy-safe AI Markdown exports, generated locally while keeping JSON backup and restore separate.']},
@@ -171,8 +172,8 @@ function todayISO(){return new Date().toISOString().slice(0,10);}
 function blankLocation(){return {room:'',bookcase:'',shelf:'',box:'',position:''};}
 function normalizeLocation(loc){if(!loc)return blankLocation();if(typeof loc==='string')return {room:loc,bookcase:'',shelf:'',box:'',position:''};return {...blankLocation(),...loc};}
 function namedLocationPart(label,value){const text=String(value||'').trim();return text?new RegExp('^'+label+'\\b','i').test(text)?text:label+' '+text:'';}
-function locationText(book){const l=normalizeLocation(book.location);return [l.room,l.bookcase,namedLocationPart('Shelf',l.shelf),namedLocationPart('Box',l.box),l.position&&`#${l.position}`].filter(Boolean).join(' · ');}
-function hasUnassignedCoreLocation(location){const l=normalizeLocation(location);return ![l.room,l.bookcase,l.shelf,l.box].some(value=>String(value||'').trim());}
+function locationText(book){const l=normalizeLocation(book.location);return [l.bookcase,namedLocationPart('Shelf',l.shelf),l.room&&`Room: ${l.room}`,namedLocationPart('Box',l.box),l.position&&`#${l.position}`].filter(Boolean).join(' · ');}
+function hasUnassignedCoreLocation(location){const l=normalizeLocation(location);return !String(l.bookcase||'').trim()||!String(l.shelf||'').trim();}
 function physicalLocationParts(location){const l=normalizeLocation(location);return {primary:[l.bookcase,namedLocationPart('Shelf',l.shelf)].filter(Boolean).join(' · '),secondary:[l.room,namedLocationPart('Box',l.box),l.position&&'#'+l.position].filter(Boolean).join(' · ')};}
 function PhysicalLocation({location,compact=false}){const missing=hasUnassignedCoreLocation(location);const parts=physicalLocationParts(location);return <span className={'physical-location '+(compact?'compact ':'')+(missing?'missing':'')}><span className="physical-location-label">Location</span><strong>{missing?(compact?'Location not assigned':'⚠ Location not assigned'):parts.primary||parts.secondary}</strong>{!missing&&parts.primary&&parts.secondary&&<small>{parts.secondary}</small>}</span>;}
 function isLentOut(book){return Boolean(String(book.lentTo||'').trim()&&!book.returnedDate);}
@@ -390,10 +391,49 @@ function importMatchKind(book,candidates=[]){
   if(title&&candidates.some(x=>normalizedTitle(x.title)===title&&normalizedTitle(x.authors||x.author)===author))return 'work';
   return '';
 }
+function backfillNativeCopyLocations(catalog,compatibilityBooks=[]){
+  const normalizedBooks=(compatibilityBooks||[]).filter(book=>book&&typeof book==='object').map(book=>normalizeBook({
+    ...book,
+    location:book.location||{room:book.room,bookcase:book.bookcase,shelf:book.physicalShelf||book.shelfNo||book.locationShelf,box:book.box,position:book.position}
+  }));
+  const uniqueBooks=new Map();
+  for(const book of normalizedBooks){const key=JSON.stringify([book.id||'',book.copyId||'',book.editionId||'']);const previous=uniqueBooks.get(key);if(!previous){uniqueBooks.set(key,book);continue;}const merged={...normalizeLocation(previous.location)};const candidate=normalizeLocation(book.location);for(const field of ['room','bookcase','shelf','box','position'])if(!String(merged[field]||'').trim()&&String(candidate[field]||'').trim())merged[field]=candidate[field];uniqueBooks.set(key,{...previous,location:merged});}
+  const books=[...uniqueBooks.values()];
+  const next={...catalog,copies:catalog.copies.map(copy=>{
+    const current=normalizeLocation(copy.location);
+    if(String(current.bookcase||'').trim()&&String(current.shelf||'').trim())return copy;
+    const candidates=books.filter(book=>{
+      const stableCopyId=String(book.copyId||'').trim();
+      const bookId=String(book.id||'').trim();
+      const copyId=String(copy.id||'').trim();
+      const sourceBookId=String(copy.sourceBookId||'').trim();
+      const exactCopy=stableCopyId&&stableCopyId===copyId;
+      const exactNativeId=bookId===copyId;
+      const associatedBook=sourceBookId&&bookId===sourceBookId;
+      const identityMatches=exactCopy||exactNativeId||associatedBook;
+      return identityMatches&&(!book.editionId||book.editionId===copy.editionId);
+    });
+    if(candidates.length!==1)return copy;
+    const matchedBook=candidates[0];
+    const otherCopyMatches=catalog.copies.filter(other=>{
+      if(other.id===copy.id||other.editionId!==matchedBook.editionId)return false;
+      const bookId=String(matchedBook.id||'').trim(),copyId=String(matchedBook.copyId||'').trim();
+      return (copyId&&copyId===String(other.id||'').trim())||bookId===String(other.id||'').trim()||(String(other.sourceBookId||'').trim()&&bookId===String(other.sourceBookId).trim());
+    });
+    if(otherCopyMatches.length)return copy;
+    const legacy=normalizeLocation(matchedBook.location);
+    const merged={...current};let changed=false;
+    for(const field of ['room','bookcase','shelf','box','position']){
+      if(!String(merged[field]||'').trim()&&String(legacy[field]||'').trim()){merged[field]=legacy[field];changed=true;}
+    }
+    return changed?{...copy,location:merged}:copy;
+  })};
+  return next;
+}
 function migrateCatalogData(raw){
   const data=Array.isArray(raw)?{books:raw}:((raw&&typeof raw==='object')?raw:{});
   const nativeSource=nativeSourceFromData(data);
-  if(nativeSource){const nativeCatalog=normalizeNativeCatalog(nativeSource);const books=nativeCatalogToBookViews(nativeCatalog);const collections=uniq([...(Array.isArray(data.collections)?data.collections:[]),...(Array.isArray(data.shelves)?data.shelves:[]),...books.flatMap(collectionNames)]).filter(x=>!isAutoFacet(x));const savedViews=Array.isArray(data.savedViews)?data.savedViews:[];const settings=normalizeSettings(data.settings||{});return {books,collections,savedViews,settings,nativeCatalog,sourceVersion:data.version||data.appVersion||'native'};}
+  if(nativeSource){const normalizedCatalog=normalizeNativeCatalog(nativeSource);const nativeCatalog=backfillNativeCopyLocations(normalizedCatalog,[...(Array.isArray(data.books)?data.books:[]),...(Array.isArray(data.compatibilityBooks)?data.compatibilityBooks:[])]);const books=nativeCatalogToBookViews(nativeCatalog);const collections=uniq([...(Array.isArray(data.collections)?data.collections:[]),...(Array.isArray(data.shelves)?data.shelves:[]),...books.flatMap(collectionNames)]).filter(x=>!isAutoFacet(x));const savedViews=Array.isArray(data.savedViews)?data.savedViews:[];const settings=normalizeSettings(data.settings||{});return {books,collections,savedViews,settings,nativeCatalog,sourceVersion:data.version||data.appVersion||'native'};}
   const rawBooks=Array.isArray(data.books)?data.books:(Array.isArray(data.compatibilityBooks)?data.compatibilityBooks:[]);
   const books=rawBooks.filter(b=>b&&typeof b==='object').map(b=>normalizeBook({
     ...b,
@@ -500,7 +540,7 @@ function repairCatalogData(rawBooks=[],rawCollections=[]){
   return {books:repaired,collections:repairedCollections};
 }
 function getGenres(book){return uniq([...(book.subjects||[]),...(book.tags||[])]).slice(0,12);}
-function hasMissingLocation(book){const l=normalizeLocation(book.location);return !l.room&&!l.bookcase&&!l.shelf&&!l.box;}
+function hasMissingLocation(book){const l=normalizeLocation(book.location);return !String(l.bookcase||'').trim()||!String(l.shelf||'').trim();}
 function normalizedTitle(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();}
 function isUnidentifiedTitle(title){return /^Unknown ·|^Untitled book$|^Unidentified book$/i.test(String(title||'').trim());}
 function needsIdentification(book){return Boolean(book?.needsIdentification);}
@@ -693,7 +733,7 @@ function printCustomBookReport({title,subtitle,books,columns}){const cols=(colum
 function cleanupSummary(books){const safe=(books||[]).filter(Boolean);const dup=duplicateGroups(safe);return {review:safe.filter(b=>needsReview(b,safe)),covers:safe.filter(b=>!b.cover),locations:safe.filter(hasMissingLocation),duplicates:dup,quality:safe.filter(b=>metadataScore(b,safe)<70),lent:safe.filter(isLentOut),overdue:safe.filter(isOverdue)}}
 function locationValueFromLabel(label){const parts=String(label||'').split(' · ');return {room:(parts[0]||'').replace(/^Unlocated$/,''),bookcase:parts[1]||'',shelf:(parts[2]||'').replace(/^Shelf /,''),box:(parts[3]||'').replace(/^Box /,''),position:''};}
 function sameLocation(a,b){a=normalizeLocation(a);b=normalizeLocation(b);return ['room','bookcase','shelf','box'].every(k=>String(a[k]||'').trim()===String(b[k]||'').trim());}
-const LOCATION_LEVELS=[['room','Room'],['bookcase','Bookcase'],['shelf','Shelf'],['box','Box']];
+const LOCATION_LEVELS=[['bookcase','Bookcase'],['shelf','Shelf'],['room','Room'],['box','Box']];
 function locationMatchesPath(book,path){const location=normalizeLocation(book?.location);return LOCATION_LEVELS.every(([field])=>!String(path?.[field]||'').trim()||String(location[field]||'').trim()===String(path[field]).trim());}
 function buildLocationTree(books=[]){
   const root={id:'locations',field:'root',label:'Locations',path:blankLocation(),copyIds:[],books:[],children:new Map()},seen=new Set();
@@ -721,7 +761,7 @@ function updateCopyLocationsInBooks(books=[],copyIds=[],destination=blankLocatio
   return {books:next,previous,changed};
 }
 function restoreCopyLocationsInBooks(books=[],previous={},updatedAt=new Date().toISOString()){return (books||[]).filter(Boolean).map(book=>{const copyId=String(book.copyId||book.id||'');return previous[copyId]?normalizeBook({...book,location:normalizeLocation(previous[copyId]),updatedAt}):book;});}
-function hasMoveDestination(location){const l=normalizeLocation(location);return ['room','bookcase','shelf','box'].some(field=>String(l[field]||'').trim());}
+function hasMoveDestination(location){const l=normalizeLocation(location);return Boolean(String(l.bookcase||'').trim()&&String(l.shelf||'').trim());}
 function moveExactCopiesInBooks(books=[],copyIds=[],destination=blankLocation(),updatedAt=new Date().toISOString()){
   const ids=new Set((copyIds||[]).map(id=>String(id||'').trim()).filter(Boolean)),found=new Set(),previous={},movedIds=[],alreadyIds=[];
   const target=normalizeLocation(destination);
@@ -1282,7 +1322,7 @@ function MoveBooksView({books,initialDestination,onLookup,onMoveCopies,onUndoMov
   const labels={moved:'✓ MOVED',already:'ALREADY HERE','not-owned':'NOT IN YOUR LIBRARY','choose-copy':'CHOOSE COPY',invalid:'INVALID ISBN',error:'MOVE FAILED',undone:'MOVE UNDONE'};
   return <div className="workspace move-books-view">
     <div className="move-books-head"><div><div className="overline">Physical library</div><h1 className="title">Scan to Location</h1><p className="subtitle">Choose where books belong, then scan owned physical Copies one after another. This never adds a Copy.</p></div><button className="ghost" onClick={onBack}>Back to Library</button></div>
-    {!sessionActive?<section className="panel panel-pad move-setup"><div className="overline">1 · Choose destination</div><h2>Move books to</h2><MoveDestinationPicker books={books} value={destination} onChange={setDestination} idPrefix="scan-move"/><button className="btn move-start" onClick={start} disabled={!hasMoveDestination(destination)}>Start moving books</button><p className="small">A partial destination is allowed; at least one location field is required.</p></section>:<>
+    {!sessionActive?<section className="panel panel-pad move-setup"><div className="overline">1 · Choose destination</div><h2>Move books to</h2><MoveDestinationPicker books={books} value={destination} onChange={setDestination} idPrefix="scan-move"/><button className="btn move-start" onClick={start} disabled={!hasMoveDestination(destination)}>Start moving books</button><p className="small">Bookcase and Shelf are required. Room and Box are optional.</p></section>:<>
       <section className="move-destination-banner" aria-label="Current scan destination"><div><div className="overline">Move books to</div><strong>{destinationText}</strong></div><button className="ghost" onClick={changeDestination}>Change destination</button></section>
       <div className="move-scan-tools"><form onSubmit={submit}><label className="label" htmlFor="move-isbn">ISBN · manual or USB/Bluetooth scanner</label><div className="find-isbn-row"><input ref={inputRef} id="move-isbn" className="field mono" inputMode="numeric" autoComplete="off" value={value} onChange={event=>setValue(event.target.value)} disabled={result?.state==='choose-copy'} placeholder="Scan or enter the next ISBN…"/><button className="btn" type="submit" disabled={result?.state==='choose-copy'}>Check book</button></div></form><button className="ghost" onClick={()=>{setCameraIssue('');setCameraOn(on=>!on)}}>{cameraOn?'Stop camera':'Start camera scan'}</button></div>
       {cameraOn&&<CameraBarcodeScanner active={cameraOn} mode="move" onDetected={checkISBN} onStop={()=>setCameraOn(false)} onUnavailable={setCameraIssue}/>}
@@ -1536,9 +1576,12 @@ function buildBookcaseNavigationIndex(catalog){
   for(const copy of catalog?.copies||[]){
     const id=String(copy?.id||'').trim();if(!id||seen.has(id))continue;seen.add(id);
     const location=normalizeLocation(copy.location);
-    if(hasUnassignedCoreLocation(location)){missing.push(copy);continue;}
-    const room=String(location.room||'').trim(),bookcase=String(location.bookcase||'').trim(),shelf=String(location.shelf||'').trim();
-    if(!room||!bookcase||!shelf){partial.push(copy);continue;}
+    if(hasUnassignedCoreLocation(location)){
+      const anyLocation=['room','bookcase','shelf','box','position'].some(field=>String(location[field]||'').trim());
+      (anyLocation?partial:missing).push(copy);continue;
+    }
+    const room=String(location.room||'').trim()||'Room not specified',bookcase=String(location.bookcase||'').trim(),shelf=String(location.shelf||'').trim();
+    if(!bookcase||!shelf){partial.push(copy);continue;}
     located++;
     if(!rooms.has(room))rooms.set(room,{label:room,copies:[],bookcases:new Map()});
     const roomNode=rooms.get(room);roomNode.copies.push(copy);
@@ -1552,7 +1595,7 @@ function buildBookcaseNavigationIndex(catalog){
 }
 function compareBookcaseCopyPosition(a,b){const ap=String(a?.location?.position||'').trim(),bp=String(b?.location?.position||'').trim();const an=/^\d+(?:\.\d+)?$/.test(ap),bn=/^\d+(?:\.\d+)?$/.test(bp);if(an&&bn&&Number(ap)!==Number(bp))return Number(ap)-Number(bp);if(an!==bn)return an?-1:1;return String(a?.title||'').localeCompare(String(b?.title||''),undefined,{sensitivity:'base',numeric:true})||String(a?.id||'').localeCompare(String(b?.id||''),undefined,{numeric:true});}
 function sortBookcaseShelfCopies(copies=[]){return [...copies].sort(compareBookcaseCopyPosition);}
-function bookcaseUnassignedShelfCopies(partial=[],room='',bookcase=''){return (partial||[]).filter(copy=>{const location=normalizeLocation(copy.location);return location.room===room&&location.bookcase===bookcase&&!location.shelf;});}
+function bookcaseUnassignedShelfCopies(partial=[],room='',bookcase=''){return (partial||[]).filter(copy=>{const location=normalizeLocation(copy.location);return (location.room||'Room not specified')===room&&location.bookcase===bookcase&&!location.shelf;});}
 function stableBookcaseHash(value=''){let hash=2166136261;for(const char of String(value)){hash^=char.charCodeAt(0);hash=Math.imul(hash,16777619);}return hash>>>0;}
 function visualBookPresentation(copy={},book={}){const palettes=[['#d5c8b5','#263342'],['#c5d0ca','#24343a'],['#d2c3bd','#392d32'],['#c5cbd7','#263249'],['#d8d0b4','#343322'],['#c2c9b2','#2e3628']];const editionKey=copy.editionId||book.editionId||copy.isbn||book.isbn||copy.workId||book.workId||copy.id||book.id||book.title||'';const color=palettes[stableBookcaseHash(editionKey)%palettes.length],shape=stableBookcaseHash(copy.id||book.copyId||book.id||book.title||'');return {background:color[0],foreground:color[1],width:42+shape%13,height:146+(shape>>>5)%29};}
 function LibraryBrowseTabs({mode,onChange}){const modes=[['books','Books'],['bookcases','Bookcases'],['browse','Browse'],['authors','Authors'],['series','Series'],['subjects','Subjects']];return <div className="library-browse-tabs" role="tablist" aria-label="Browse library by">{modes.map(([id,label])=><button key={id} role="tab" aria-selected={mode===id} onClick={()=>onChange(id)}>{label}</button>)}</div>;}
@@ -1650,10 +1693,10 @@ function BookcasesLibraryView({catalog,books,onEdit,browseTabs,onMoveRequest,onO
     </section>:<>
       {!active.room&&<p className="small bookcase-intro">Browse where physical copies belong. Collections are separate from rooms, bookcases, and shelves. This view shows the complete inventory regardless of Library search filters.</p>}
       {active.bookcase&&!active.shelf&&<div className="bookcase-view-toggle" role="group" aria-label="Bookcase view"><button className={!visualBookcase?'active':''} aria-pressed={!visualBookcase} onClick={()=>setVisualBookcase(false)}>List / Inventory</button><button className={visualBookcase?'active':''} aria-pressed={visualBookcase} onClick={()=>setVisualBookcase(true)}>Visual Bookcase</button></div>}
-      {active.bookcase&&!active.shelf&&visualBookcase?<VisualBookcase bookcase={bookcase} room={active.room} unassigned={bookcaseUnassignedShelfCopies(index.partial,active.room,active.bookcase)} books={books} onEdit={onEdit} onMoveRequest={onMoveRequest} onOpenScan={onOpenScan}/>:cards.length?<div className="bookcase-card-grid" aria-label={cardKind==='Shelf'?'Shelves':cardKind+'s'}>{cards.map(item=><button className="bookcase-nav-card" key={item.label} onClick={()=>openCard(item.label)}><span className="overline">{cardKind}</span><strong>{active.bookcase?physicalLocationParts({shelf:item.label}).primary:item.label}</strong><span>{countLabel(item.copies.length)} · {active.bookcase?'View shelf':active.room?item.shelves.length+' '+(item.shelves.length===1?'shelf':'shelves'):item.bookcases.length+' '+(item.bookcases.length===1?'bookcase':'bookcases')}</span><span className="bookcase-card-arrow" aria-hidden="true">›</span></button>)}</div>:<div className="clean-empty"><h2>No physical locations yet.</h2><p>Open a book in Library and assign its Room, Bookcase, and Shelf to start browsing here.</p></div>}
+      {active.bookcase&&!active.shelf&&visualBookcase?<VisualBookcase bookcase={bookcase} room={active.room==='Room not specified'?'':active.room} unassigned={[...index.missing,...index.partial].filter(copy=>{const location=normalizeLocation(copy.location);return (location.room||'Room not specified')===active.room&&location.bookcase===active.bookcase&&!location.shelf;})} books={books} onEdit={onEdit} onMoveRequest={onMoveRequest} onOpenScan={onOpenScan}/>:cards.length?<div className="bookcase-card-grid" aria-label={cardKind==='Shelf'?'Shelves':cardKind+'s'}>{cards.map(item=><button className="bookcase-nav-card" key={item.label} onClick={()=>openCard(item.label)}><span className="overline">{cardKind}</span><strong>{active.bookcase?physicalLocationParts({shelf:item.label}).primary:item.label}</strong><span>{countLabel(item.copies.length)} · {active.bookcase?'View shelf':active.room?item.shelves.length+' '+(item.shelves.length===1?'shelf':'shelves'):item.bookcases.length+' '+(item.bookcases.length===1?'bookcase':'bookcases')}</span><span className="bookcase-card-arrow" aria-hidden="true">›</span></button>)}</div>:<div className="clean-empty"><h2>No physical locations yet.</h2><p>Open a book in Library and assign its Bookcase and Shelf to start browsing here.</p></div>}
       {!active.room&&<div className="bookcase-fallbacks">
-        {index.missing.length>0&&<button className="bookcase-fallback-card" onClick={()=>setPath({room:'',bookcase:'',shelf:'',special:'missing'})}><strong>Needs a location</strong><span>{countLabel(index.missing.length)} with no Room, Bookcase, or Shelf. Open a copy to assign its location.</span><b>{index.missing.length} ›</b></button>}
-        {index.partial.length>0&&<button className="bookcase-fallback-card" onClick={()=>setPath({room:'',bookcase:'',shelf:'',special:'partial'})}><strong>Incomplete location</strong><span>{countLabel(index.partial.length)} with some location details but an incomplete Room → Bookcase → Shelf path.</span><b>{index.partial.length} ›</b></button>}
+        {index.missing.length>0&&<button className="bookcase-fallback-card" onClick={()=>setPath({room:'',bookcase:'',shelf:'',special:'missing'})}><strong>Needs a location</strong><span>{countLabel(index.missing.length)} with no recorded physical location details. Open a copy to assign Bookcase and Shelf.</span><b>{index.missing.length} ›</b></button>}
+        {index.partial.length>0&&<button className="bookcase-fallback-card" onClick={()=>setPath({room:'',bookcase:'',shelf:'',special:'partial'})}><strong>Incomplete location</strong><span>{countLabel(index.partial.length)} with some location details but missing Bookcase or Shelf.</span><b>{index.partial.length} ›</b></button>}
       </div>}
     </>}
   </div>;
@@ -1957,7 +2000,7 @@ function DashboardView({books,collections,savedViews,setActiveView,setActiveColl
 function findLocationNode(root,id){if(!root||!id)return null;if(root.id===id)return root;for(const child of root.children||[]){const found=findLocationNode(child,id);if(found)return found;}return null;}
 function LocationTreeBranch({nodes,selectedId,onSelect,depth=0}){return <div className={depth?'location-tree-children':'location-tree'}>{nodes.map(node=><div className="location-tree-branch" key={node.id}><button className={'location-tree-row '+(selectedId===node.id?'active':'')} onClick={()=>onSelect(node.id)} aria-pressed={selectedId===node.id}><span className="location-kind">{node.typeLabel}</span><b className="truncate">{node.field==='shelf'?'Shelf '+node.label:node.field==='box'?'Box '+node.label:node.label}</b><span className="mono">{node.copyIds.length} {node.copyIds.length===1?'copy':'copies'}</span></button>{node.children.length>0&&<LocationTreeBranch nodes={node.children} selectedId={selectedId} onSelect={onSelect} depth={depth+1}/>}</div>)}</div>;}
 function LocationCopyList({books,allBooks,onEdit}){return <div className="location-copy-list" role="list">{books.length?books.map(book=>{const peers=allBooks.filter(other=>book.editionId&&other.editionId===book.editionId).sort((a,b)=>String(a.copyId||a.id).localeCompare(String(b.copyId||b.id)));const number=peers.findIndex(other=>(other.copyId||other.id)===(book.copyId||book.id))+1;return <div className="location-copy-row" role="listitem" key={book.copyId||book.id}><div className="cover-mini">{book.cover?<img loading="lazy" src={book.cover} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>:<Icon name="book" size={18}/>}<ReadBadge book={book}/></div><button className="location-copy-row-main" onClick={()=>onEdit(book)}><b className="truncate">{book.title||'Untitled book'}</b><span className="small truncate">{book.authors||'Unknown author'}{peers.length>1?' · Copy '+number+' of '+peers.length:''}</span></button><div className="location-copy-row-meta"><div className="small">{locationText(book)||'No location'}</div>{book.condition&&<span className="chip gray">{book.condition}</span>}</div></div>}):<div className="small">This location is empty.</div>}</div>;}
-function LocationDestinationFields({books,value,onChange,showPosition,idPrefix='location'}){const suggestions=useMemo(()=>locationSuggestions(books,value),[books,value.room,value.bookcase,value.shelf]);const update=(field,next)=>{const destination={...value,[field]:next};if(field==='room'){destination.bookcase='';destination.shelf='';destination.box='';}if(field==='bookcase'){destination.shelf='';destination.box='';}if(field==='shelf')destination.box='';onChange(destination);};return <div className="location-destination-grid">{LOCATION_LEVELS.map(([field,label])=><label key={field}><div className="label">{label}</div><input className="field" list={idPrefix+'-'+field+'-options'} value={value[field]} onChange={event=>update(field,event.target.value)} placeholder={label}/><datalist id={idPrefix+'-'+field+'-options'}>{suggestions[field].map(item=><option key={item} value={item}/>)}</datalist></label>)}{showPosition&&<label><div className="label">Position</div><input className="field" value={value.position} onChange={event=>onChange({...value,position:event.target.value})} placeholder="Optional position"/></label>}</div>;}
+function LocationDestinationFields({books,value,onChange,showPosition,idPrefix='location'}){const suggestions=useMemo(()=>locationSuggestions(books,value),[books,value.room,value.bookcase,value.shelf]);const update=(field,next)=>{const destination={...value,[field]:next};if(field==='bookcase'){destination.shelf='';destination.box='';}if(field==='shelf')destination.box='';onChange(destination);};return <div className="location-destination-grid">{LOCATION_LEVELS.map(([field,label])=><label key={field}><div className="label">{label}{['bookcase','shelf'].includes(field)?' *':''}</div><input className="field" list={idPrefix+'-'+field+'-options'} value={value[field]} onChange={event=>update(field,event.target.value)} placeholder={label}/><datalist id={idPrefix+'-'+field+'-options'}>{suggestions[field].map(item=><option key={item} value={item}/>)}</datalist></label>)}{showPosition&&<label><div className="label">Position</div><input className="field" value={value.position} onChange={event=>onChange({...value,position:event.target.value})} placeholder="Optional position"/></label>}</div>;}
 function commonMoveDestinations(books=[]){
   const paths=new Map();
   for(const book of books||[]){
@@ -2046,7 +2089,7 @@ function EditModal({book,collections,onSave,onDelete,onClose,onPreviewMetadata,o
   const shelfOptions=editorShelfOptions(d,collections);const update=(key,value)=>setD(current=>({...current,[key]:value}));const updateLoc=(key,value)=>setD(current=>({...current,location:{...normalizeLocation(current.location),[key]:value}}));
   const addTag=()=>{const value=tagDraft.trim();if(value)setD(current=>({...current,tags:uniq([...(current.tags||[]),value])}));setTagDraft('')};const addCollection=()=>{const value=colDraft.trim();if(value)setD(current=>setBookCollections(current,[...collectionNames(current),value]));setColDraft('')};const toggleCollection=value=>setD(current=>setBookCollections(current,inCollection(current,value)?collectionNames(current).filter(item=>item!==value):[...collectionNames(current),value]));
   const setOpenLibraryCover=()=>{const url=coverUrlFromISBN(d.isbn);if(url){setCoverErr(false);update('cover',url)}};const uploadCover=async event=>{const file=event.target.files?.[0];if(!file)return;try{const data=await compressImageFile(file);if(data){setCoverErr(false);update('cover',data);if(textBytes(data)>COVER_WARN_BYTES)alert('The compressed cover is still large and may increase backup size.');}}catch(error){alert(error?.message||'Could not process cover image');}event.target.value=''};
-  const setStatus=value=>setD(current=>{const next={...current,status:value};if(value==='reading'&&!next.startedAt)next.startedAt=todayISO();if(value==='read'){if(!next.finishedAt)next.finishedAt=todayISO();if(!next.readCount)next.readCount=1;}return next;});const field=(label,node,className='')=><label className={className}><div className="label">{label}</div>{node}</label>;const location=normalizeLocation(d.location);const publication=[d.publisher,d.year].filter(Boolean).join(' · ');const seriesLabel=d.series?[d.series,d.seriesNumber?'Book '+d.seriesNumber:''].filter(Boolean).join(' · '):'';const reviewHints=reviewReasons(d,[]);
+  const setStatus=value=>setD(current=>{const next={...current,status:value};if(value==='reading'&&!next.startedAt)next.startedAt=todayISO();if(value==='read'){if(!next.finishedAt)next.finishedAt=todayISO();if(!next.readCount)next.readCount=1;}return next;});const field=(label,node,className='')=>{const shownLabel=['Bookcase','Shelf'].includes(label)?label+' *':['Room','Box','Position'].includes(label)?label+' (optional)':label;return <label className={className}><div className="label">{shownLabel}</div>{node}</label>};const location=normalizeLocation(d.location);const publication=[d.publisher,d.year].filter(Boolean).join(' · ');const seriesLabel=d.series?[d.series,d.seriesNumber?'Book '+d.seriesNumber:''].filter(Boolean).join(' · '):'';const reviewHints=reviewReasons(d,[]);
   return <div className="modal-back" onClick={onClose} role="presentation"><div ref={modalRef} className="modal book-detail-modal" role="dialog" aria-modal="true" aria-label="Edit book details" tabIndex="-1" onClick={event=>event.stopPropagation()}>
     <div className="modal-head"><div><div className="overline">Catalog Entry</div><b>Book details</b></div><button className="ghost" onClick={onClose} aria-label="Close book details"><Icon name="x" size={14}/></button></div>
     <div className="modal-body"><header className="book-detail-hero"><div className="book-detail-cover-column"><div className="cover book-detail-cover">{d.cover&&!coverErr?<img loading="lazy" src={d.cover} alt="" onError={()=>setCoverErr(true)}/>:<Icon name="book" size={38}/>}<ReadBadge book={d}/></div><input ref={uploadRef} type="file" accept="image/*" className="sr-only" onChange={uploadCover}/><div className="book-detail-cover-actions"><button type="button" className="ghost book-detail-cover-toggle" aria-expanded={coverControlsOpen} aria-controls="book-detail-cover-action-menu" onClick={()=>setCoverControlsOpen(open=>!open)}>Change cover</button><div id="book-detail-cover-action-menu" className="book-detail-cover-action-menu" hidden={!coverControlsOpen}><button className="ghost" onClick={()=>uploadRef.current?.click()}>Upload cover</button><button className="ghost" disabled={!d.isbn||!isValidISBN(d.isbn)} onClick={setOpenLibraryCover}>Use ISBN cover</button><button className="ghost danger" disabled={!d.cover} onClick={()=>{setCoverErr(false);update('cover','')}}>Remove cover</button></div></div></div><div className="book-detail-identity"><div className="overline">My library record</div><h1>{d.title||'Untitled book'}</h1><div className="book-detail-author">{d.authors||'Unknown author'}</div>{seriesLabel&&<div className="book-detail-series">{seriesLabel}</div>}<PhysicalLocation location={d.location}/><div className="book-detail-publication">{publication||'Publication details not recorded'}<br/><span className="book-detail-isbn">{d.isbn?'ISBN '+d.isbn:'ISBN not recorded'}</span></div>{d.status==='read'&&<span className="chip good book-detail-status"><Icon name="check" size={12}/> Read</span>}</div></header>

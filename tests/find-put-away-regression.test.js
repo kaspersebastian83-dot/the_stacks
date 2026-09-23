@@ -63,7 +63,7 @@ assert.equal(JSON.stringify(fixture),before,'Owned, unknown, and invalid lookup 
 assert.equal(fixture.copies.length,3,'Lookup never creates another Copy');
 
 const partial={room:'',bookcase:'',shelf:'',box:'Box 4',position:''};
-assert.equal(hasUnassignedCoreLocation(partial),false,'Box-only location is partial, not unassigned');
+assert.equal(hasUnassignedCoreLocation(partial),true,'Box-only location is incomplete without Bookcase and Shelf');
 assert.equal(hasUnassignedCoreLocation({room:'',bookcase:'',shelf:'',box:'',position:''}),true,'Completely blank location is unassigned');
 assert.equal(physicalLocationParts(fixture.copies[0].location).primary,'Bookcase 2 · Shelf 4');
 assert.equal(hasUnassignedCoreLocation(fixture.copies[0].location),false);

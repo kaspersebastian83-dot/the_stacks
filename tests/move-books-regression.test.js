@@ -31,6 +31,7 @@ const code=runtime+isbnSource+
   slice('function v3StableId','function buildV3CatalogModel')+
   slice('function validateNativeBackupCatalog','function migrationBackupInfo')+
   slice('function blankNativeCatalog','function migrationBackupPayload')+
+  slice('function backfillNativeCopyLocations','function migrateCatalogData')+
   slice('function migrateCatalogData','function buildImportPreview')+
   slice('function collectionNames','function editorShelfOptions')+
   slice('function sameLocation','function parseCSV')+
@@ -70,8 +71,9 @@ const shelf=(index,room,bookcase,label)=>index.rooms.find(item=>item.label===roo
 const preserved=book=>({id:book.id,copyId:book.copyId,workId:book.workId,editionId:book.editionId,collections:book.collections,tags:book.tags,status:book.status,rating:book.rating,copyNotes:book.copyNotes,condition:book.condition,isbn:book.isbn,title:book.title});
 
 assert.equal(api.hasMoveDestination(loc()),false);
-assert.equal(api.hasMoveDestination(loc('Study')),true,'Partial destination remains valid');
-assert.equal(api.hasMoveDestination(loc('','','','Box 1')),true);
+assert.equal(api.hasMoveDestination(loc('Study')),false,'Room-only destination is invalid');
+assert.equal(api.hasMoveDestination(loc('','','','Box 1')),false,'Box-only destination is invalid');
+assert.equal(api.hasMoveDestination(loc('','Bookcase 2','Shelf 4')),true,'Room is optional when Bookcase and Shelf are selected');
 const beforeIndex=api.buildBookcaseNavigationIndex(fixture);
 assert.deepEqual(Array.from(shelf(beforeIndex,'Study','Bookcase 1','2').copies,item=>item.id),['copy-a']);
 const single=api.moveExactCopiesInBooks(views,['copy-a'],dest,'2026-09-23T00:00:00.000Z');

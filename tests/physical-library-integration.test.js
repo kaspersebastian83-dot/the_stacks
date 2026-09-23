@@ -30,6 +30,7 @@ const code=runtime+isbnSource+
   slice('function v3StableId','function buildV3CatalogModel')+
   slice('function validateNativeBackupCatalog','function migrationBackupInfo')+
   slice('function blankNativeCatalog','function migrationBackupPayload')+
+  slice('function backfillNativeCopyLocations','function migrateCatalogData')+
   slice('function migrateCatalogData','function buildImportPreview')+
   slice('function collectionNames','function editorShelfOptions')+
   slice('function sameLocation','function parseCSV')+

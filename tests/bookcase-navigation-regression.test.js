@@ -38,9 +38,9 @@ const fixture={
 const before=JSON.stringify(fixture);
 const index=buildBookcaseNavigationIndex(fixture);
 const ids=items=>Array.from(items,item=>item.id);
-assert.deepEqual({...index.counts},{copies:8,located:5,missing:1,partial:2,rooms:2,bookcases:3,shelves:4});
-assert.deepEqual(Array.from(index.rooms,item=>item.label),['Office','Study']);
-const office=index.rooms[0],study=index.rooms[1];
+assert.deepEqual({...index.counts},{copies:8,located:6,missing:1,partial:1,rooms:3,bookcases:4,shelves:5});
+assert.deepEqual(Array.from(index.rooms,item=>item.label),['Office','Room not specified','Study']);
+const office=index.rooms[0],roomless=index.rooms[1],study=index.rooms[2];
 assert.equal(office.bookcases[0].label,'Bookcase 1');
 assert.deepEqual(ids(office.bookcases[0].shelves[0].copies),['copy-d']);
 assert.deepEqual(Array.from(study.bookcases,item=>item.label),['Bookcase 2','Bookcase 10']);
@@ -49,22 +49,23 @@ assert.deepEqual(ids(study.bookcases[0].shelves[0].copies),['copy-a','copy-h'],'
 assert.deepEqual(ids(study.bookcases[0].shelves[1].copies),['copy-b'],'Shelf inventory must exclude neighbouring shelves');
 assert.deepEqual(ids(study.bookcases[1].shelves[0].copies),['copy-c'],'Another Edition belongs to its own exact shelf');
 assert.deepEqual(ids(index.missing),['copy-e']);
-assert.deepEqual(ids(index.partial),['copy-f','copy-g']);
+assert.deepEqual(ids(index.partial),['copy-f']);
+assert.deepEqual(ids(roomless.bookcases[0].shelves[0].copies),['copy-g'],'Room is optional when Bookcase and Shelf are assigned');
 assert.equal(hasUnassignedCoreLocation(fixture.copies[4].location),true,'Use the same missing-location rule as Find / Put Away');
 const boxOnly={copies:[{id:'copy-box-only',location:{room:'',bookcase:'',shelf:'',box:'Box 1',position:''}}]};
 const boxOnlyIndex=buildBookcaseNavigationIndex(boxOnly);
-assert.equal(hasUnassignedCoreLocation(boxOnly.copies[0].location),false,'A Box-only Copy has a partial, not blank, location');
+assert.equal(hasUnassignedCoreLocation(boxOnly.copies[0].location),true,'A Box-only Copy is incomplete without Bookcase and Shelf');
 assert.deepEqual(ids(boxOnlyIndex.partial),['copy-box-only']);
 assert.equal(boxOnlyIndex.missing.length,0);
-assert.equal(locationText({location:{room:'Office',bookcase:'Bookcase 1',shelf:'Shelf 2',box:'Box 3',position:''}}),'Office · Bookcase 1 · Shelf 2 · Box 3','Location summaries must not repeat Shelf or Box labels');
+assert.equal(locationText({location:{room:'Office',bookcase:'Bookcase 1',shelf:'Shelf 2',box:'Box 3',position:''}}),'Bookcase 1 · Shelf 2 · Room: Office · Box 3','Location summaries prioritize Bookcase and Shelf');
 assert.equal(JSON.stringify(fixture),before,'Read-only hierarchy derivation must not mutate native catalog data');
 
 const moved=JSON.parse(JSON.stringify(fixture));
 moved.copies.find(copy=>copy.id==='copy-b').location=location('Office','Bookcase 1','Shelf 1');
 const movedIndex=buildBookcaseNavigationIndex(moved);
 assert.deepEqual(ids(movedIndex.rooms[0].bookcases[0].shelves[0].copies),['copy-b','copy-d']);
-assert.deepEqual(ids(movedIndex.rooms[1].bookcases[0].shelves[0].copies),['copy-a','copy-h']);
-assert.equal(movedIndex.rooms[1].bookcases[0].shelves.length,1,'Empty shelf disappears after moving its final Copy');
+assert.deepEqual(ids(movedIndex.rooms[2].bookcases[0].shelves[0].copies),['copy-a','copy-h']);
+assert.equal(movedIndex.rooms[2].bookcases[0].shelves.length,1,'Empty shelf disappears after moving its final Copy');
 assert.equal(fixture.copies[0].location.room,'Study','Moving one same-Edition Copy must not alter another');
 assert.equal(JSON.stringify(fixture),before,'Original fixture remains unchanged');
 

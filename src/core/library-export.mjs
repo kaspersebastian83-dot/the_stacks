@@ -25,9 +25,9 @@ const records = catalog => {
     return {copy, edition, work};
   });
 };
-const locationParts = location => [['room', ''], ['bookcase', ''], ['shelf', 'Shelf '], ['box', 'Box '], ['position', '#']]
+const locationParts = location => [['bookcase', ''], ['shelf', 'Shelf '], ['room', 'Room: '], ['box', 'Box '], ['position', '#']]
   .map(([key, prefix]) => { const part = value(location?.[key]).trim(); return part ? prefix + part : ''; }).filter(Boolean);
-const hasLocation = location => locationParts(location).length > 0;
+const hasLocation = location => Boolean(value(location?.bookcase).trim() && value(location?.shelf).trim());
 const labelStatus = status => STATUS_LABELS[status] || 'Unread';
 const md = input => value(input).replace(/([\\`*_{}\[\]<>()#+.!|])/g, '\\$1').replace(/\r?\n/g, '  \n');
 
@@ -104,7 +104,7 @@ export function createAiMarkdown(catalog, collectionNames = []) {
       if (['year', 'publisher', 'isbn', 'language', 'edition', 'format'].some(key => edition[key])) lines.push('');
       editionItems.forEach(({copy}) => {
         const parts = locationParts(copy.location);
-        const location = hasLocation(copy.location) ? parts.join(' → ') : 'Not assigned';
+        const location = parts.length ? parts.join(' → ') : 'Not assigned';
         lines.push(`- Copy: ${md(location)}`);
         lines.push(`  - Reading status: ${md(labelStatus(copy.status))}`);
         if (copy.rating) lines.push(`  - Rating: ${md(copy.rating)}/5`);
