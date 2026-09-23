@@ -14,6 +14,7 @@ const suites=[
   'backup-roundtrip-regression.test.js',
   'location-regression.test.js',
   'find-put-away-regression.test.js',
+  'bookcase-navigation-regression.test.js',
   'reset-safety-regression.test.js'
 ];
 

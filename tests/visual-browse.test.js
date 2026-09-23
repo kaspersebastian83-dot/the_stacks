@@ -141,7 +141,7 @@ assert.match(html,/touch-action:pan-y/);
 assert.match(html,/<option value="physical-location">Physical location<\/option>/);
 assert.match(html,/clean-row-location/);
 assert.match(html,/library-sort-control/);
-assert.match(html,/const modes=\[\['books','Books'\],\['browse','Browse'\]/);
+assert.match(html,/const modes=\[\['books','Books'\],\['bookcases','Bookcases'\],\['browse','Browse'\]/);
 assert.match(html,/const NATIVE_CATALOG_MODEL='work-edition-copy-v1'/);
 assert.match(html,/schemaVersion:3/);
 assert.doesNotMatch(slice('function VisualBrowseView','function LibraryView'),/localStorage|indexedDB|idbSet/);
