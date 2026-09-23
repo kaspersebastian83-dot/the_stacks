@@ -8,6 +8,7 @@ const suites=[
   'search-regression.test.js',
   'visual-browse.test.js',
   'library-browse-refinement.test.js',
+  'ai-export-regression.test.js',
   'core-model-regression.test.js',
   'isbn-regression.test.js',
   'scan-regression.test.js',
