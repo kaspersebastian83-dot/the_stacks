@@ -13,6 +13,11 @@ const suites=[
   'scan-regression.test.js',
   'backup-roundtrip-regression.test.js',
   'location-regression.test.js',
+  'find-put-away-regression.test.js',
+  'bookcase-navigation-regression.test.js',
+  'move-books-regression.test.js',
+  'physical-library-integration.test.js',
+  'storage-mode-regression.test.js',
   'reset-safety-regression.test.js'
 ];
 
