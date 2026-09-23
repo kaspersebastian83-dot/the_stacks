@@ -9,7 +9,7 @@ function slice(start,end){const from=source.indexOf(start),to=source.indexOf(end
 const code=slice('function blankLocation','function PhysicalLocation')+
   slice('function compareNaturalLocationValue','function physicalLocationSortEntry')+
   slice('function buildBookcaseNavigationIndex','function LibraryBrowseTabs')+
-  ';globalThis.api={normalizeLocation,buildBookcaseNavigationIndex,compareBookcaseCopyPosition,sortBookcaseShelfCopies,bookcaseUnassignedShelfCopies};';
+  ';globalThis.api={normalizeLocation,buildBookcaseNavigationIndex,compareBookcaseCopyPosition,sortBookcaseShelfCopies,bookcaseUnassignedShelfCopies,visualBookPresentation};';
 const context=vm.createContext({Map,Set});vm.runInContext(code,context);
 const api=context.api;
 const loc=(shelf,position='',box='')=>({room:'Study',bookcase:'Bookcase 2',shelf,box,position});
@@ -37,16 +37,37 @@ assert.ok(afterMove.shelves.find(shelf=>shelf.label==='Shelf 10').copies.some(co
 assert.equal(moved.copies.find(copy=>copy.id==='copy-2').workId,'work-1');
 assert.equal(moved.copies.find(copy=>copy.id==='copy-2').editionId,'edition-1');
 assert.equal(catalog.copies.find(copy=>copy.id==='copy-10').location.position,'10','moving one Copy does not modify its sibling');
+const presentationA=api.visualBookPresentation(catalog.copies[0],catalog.copies[0]);
+const presentationARepeat=api.visualBookPresentation(catalog.copies[0],catalog.copies[0]);
+const presentationB=api.visualBookPresentation(catalog.copies[1],catalog.copies[1]);
+assert.deepEqual({...presentationA},{...presentationARepeat},'same Copy presentation is stable across repeated derivations');
+assert.equal(presentationA.background,presentationB.background,'Copies of the same Edition share a visual family');
+assert.notDeepEqual([presentationA.width,presentationA.height],[presentationB.width,presentationB.height],'Copies can have subtle deterministic visual differentiation');
+assert.ok(presentationA.width>=42&&presentationA.width<=54&&presentationA.height>=146&&presentationA.height<=174);
+const manyCopies=Array.from({length:40},(_,index)=>({id:'long-shelf-'+index,editionId:'long-edition',title:'Volume '+index,location:loc('Shelf 1',String(index+1))}));
+assert.equal(api.sortBookcaseShelfCopies(manyCopies).length,40,'long shelves retain every Copy');
+assert.deepEqual(Array.from(api.sortBookcaseShelfCopies(manyCopies).slice(0,3),copy=>copy.id),['long-shelf-0','long-shelf-1','long-shelf-2']);
+assert.equal(JSON.stringify(catalog),before,'deterministic presentation calculation is read-only');
 
 assert.match(source,/function VisualBookcase\(/);
-assert.match(source,/aria-label=\{'Open '\+label\}/,'visual Copy action identifies title, author, Shelf, and Position accessibly');
-assert.match(source,/onEdit\(book\)/,'visual Copy activation opens that Copy record');
-assert.match(source,/onMoveRequest\(\[copy\.id\]\)/,'visual move uses existing exact-Copy move workflow');
+assert.match(source,/aria-label=\{'Select '\+label\}/,'visual Copy selection identifies title, author, and complete location accessibly');
+assert.match(source,/copiesById\.get\(selectedCopyId\)/,'the selected action panel targets the exact Copy ID');
+assert.match(source,/onEdit\(selectedBook\)/,'Open details targets the selected Copy view');
+assert.match(source,/onMoveRequest\(\[selectedCopy\.id\]\)/,'selected Copy move uses existing exact-Copy workflow');
 assert.match(source,/onOpenScan\(\{room,bookcase:bookcase\.label,shelf:shelf\.label/,'scan-to-shelf passes an explicit editable destination');
 assert.match(source,/List \/ Inventory/,'existing inventory navigation remains available');
 assert.match(source,/Visual Bookcase/);
 assert.match(source,/Books not assigned to a Shelf/);
 assert.match(source,/copy\.location\?\.position/,'position remains Copy.location metadata');
-assert.match(source,/visual-copy-cover/,'cover image and text-spine fallback are supported');
+assert.match(source,/visual-copy-spine-cover/,'existing cover art is reused as a narrow spine accent');
+assert.match(source,/visual-copy-title/,'spine title remains visible and can be read fully on selection');
+assert.match(source,/Locate on Shelf/,'selected Copy exposes a physical-location action');
+assert.match(source,/aria-pressed=\{isSelected\}/,'selection state is available to assistive technology');
+assert.match(source,/role="Selected physical Copy"|aria-label="Selected physical Copy"/);
 assert.match(source,/bookcaseUnassignedShelfCopies\(index\.partial/,'copies without a Shelf are never assigned to one');
+const presentationSource=source.slice(source.indexOf('function visualBookPresentation'),source.indexOf('function LibraryBrowseTabs'));
+assert.doesNotMatch(presentationSource,/Math\.random|crypto\.random|Date\.now/,'visual identity never uses random or time-varying values');
+assert.match(source,/@media\(max-width:700px\)/,'mobile changes spine labels to readable horizontal cards');
+assert.match(source,/prefers-reduced-motion:reduce/,'spine transitions respect reduced-motion preference');
 console.log('Visual Bookcase exact Copy identity, natural shelves, numeric positions, move/scan integration, incomplete locations, and read-only derivation: PASS');
+console.log('Stable muted spine styling, selected Copy actions, long-shelf density, and responsive accessibility: PASS');
