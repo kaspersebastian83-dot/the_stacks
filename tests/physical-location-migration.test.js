@@ -44,7 +44,7 @@ assert.equal(has({room:'',bookcase:'Bookcase 2',shelf:'4'}),false,'Room is optio
 assert.equal(has({bookcase:'Bookcase 2',shelf:''}),true);assert.equal(has({bookcase:'',shelf:'4'}),true);assert.equal(has({room:'Study',box:'Box 1'}),true);
 assert.equal(api.hasMoveDestination({bookcase:'B',shelf:'2'}),true);assert.equal(api.hasMoveDestination({room:'Study',box:'Box 2'}),false);
 const locationless={modelVersion:'v',works:[],editions:[],copies:[{id:'roomless',workId:'w',editionId:'e',location:{bookcase:'Bookcase 2',shelf:'4'}}]};
-const index=api.buildBookcaseNavigationIndex(locationless);assert.equal(index.counts.located,1);assert.equal(index.rooms[0].label,'Room not specified');assert.equal(index.rooms[0].bookcases[0].shelves[0].copies[0].id,'roomless');
+const index=api.buildBookcaseNavigationIndex(locationless);assert.equal(index.counts.located,1);assert.equal(index.bookcases[0].room,'');assert.equal(index.bookcases[0].shelves[0].copies[0].id,'roomless');
 assert.deepEqual(Array.from(copies.get('copy-a').collections),['Penguin Classics'],'Collections stay separate from physical Shelf');
 console.log('PHYSICAL_LOCATION_MIGRATION_PASS');
 console.log('Native precedence, exact identity backfill, optional Room, completeness, no fabricated Copies, idempotency, stable IDs/timestamps, and Collections separation: PASS');

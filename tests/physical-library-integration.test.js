@@ -59,7 +59,7 @@ const assigned=api.moveExactCopiesInBooks(api.nativeCatalogToBookViews(imported)
 assert.equal(assigned.changed,1);
 const assignedCatalog=api.nativeCatalogFromBookViews(assigned.books,imported);
 const ids=items=>Array.from(items||[],item=>item.id);
-const shelf=(catalog,room,bookcase,label)=>api.buildBookcaseNavigationIndex(catalog).rooms.find(item=>item.label===room)?.bookcases.find(item=>item.label===bookcase)?.shelves.find(item=>item.label===label);
+const shelf=(catalog,room,bookcase,label)=>api.buildBookcaseNavigationIndex(catalog).bookcases.find(item=>item.room===room&&item.label===bookcase)?.shelves.find(item=>item.label===label);
 assert.deepEqual(ids(shelf(assignedCatalog,'Office','Bookcase 1','2')?.copies),['copy-integration']);
 assert.equal(api.lookupOwnedISBN(assignedCatalog,'9780140449112').copies[0].copy.location.room,'Office');
 

@@ -67,7 +67,7 @@ const views=api.nativeCatalogToBookViews(fixture);
 const viewsBefore=JSON.stringify(views);
 const dest=loc('Living room','Main Bookcase','4','Box 1');
 const byId=(items,id)=>items.find(item=>(item.copyId||item.id)===id);
-const shelf=(index,room,bookcase,label)=>index.rooms.find(item=>item.label===room)?.bookcases.find(item=>item.label===bookcase)?.shelves.find(item=>item.label===label);
+const shelf=(index,room,bookcase,label)=>index.bookcases.find(item=>item.room===room&&item.label===bookcase)?.shelves.find(item=>item.label===label);
 const preserved=book=>({id:book.id,copyId:book.copyId,workId:book.workId,editionId:book.editionId,collections:book.collections,tags:book.tags,status:book.status,rating:book.rating,copyNotes:book.copyNotes,condition:book.condition,isbn:book.isbn,title:book.title});
 
 assert.equal(api.hasMoveDestination(loc()),false);

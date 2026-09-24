@@ -22,8 +22,8 @@ const catalog={works:[{id:'work-1'}],editions:[{id:'edition-1',workId:'work-1'},
   {id:'copy-partial-other',workId:'work-1',editionId:'edition-2',title:'Other room',location:{room:'Office',bookcase:'Bookcase 2',shelf:'',box:'',position:''}}
 ]};
 const before=JSON.stringify(catalog),index=api.buildBookcaseNavigationIndex(catalog);
-assert.deepEqual(Array.from(index.rooms,item=>item.label),['Study']);
-const bookcase=index.rooms[0].bookcases[0];
+assert.deepEqual(Array.from(index.bookcases,item=>item.label),['Bookcase 2']);
+const bookcase=index.bookcases[0];
 assert.deepEqual(Array.from(bookcase.shelves,item=>item.label),['Shelf 2','Shelf 10'],'Shelf names use existing natural sort');
 assert.deepEqual(Array.from(api.sortBookcaseShelfCopies(bookcase.shelves[0].copies),copy=>copy.id),['copy-2','copy-10','copy-no-position'],'numeric positions sort numerically and missing positions follow deterministically');
 assert.equal(new Set(bookcase.shelves[0].copies.map(copy=>copy.id)).size,3,'each physical Copy remains distinct even with duplicate ISBNs and Editions');
@@ -31,7 +31,7 @@ assert.deepEqual(Array.from(api.bookcaseUnassignedShelfCopies(index.partial,'Stu
 assert.equal(bookcase.shelves[0].copies.find(copy=>copy.id==='copy-10').location.box,'Box A','Box data remains part of Copy.location');
 assert.equal(JSON.stringify(catalog),before,'Opening/deriving the visual inventory must not mutate source catalog data');
 const moved={...catalog,copies:catalog.copies.map(copy=>copy.id==='copy-2'?{...copy,location:loc('Shelf 10','3')}:copy)};
-const afterMove=api.buildBookcaseNavigationIndex(moved).rooms[0].bookcases[0];
+const afterMove=api.buildBookcaseNavigationIndex(moved).bookcases.find(item=>item.room==='Study');
 assert.ok(!afterMove.shelves.find(shelf=>shelf.label==='Shelf 2').copies.some(copy=>copy.id==='copy-2'));
 assert.ok(afterMove.shelves.find(shelf=>shelf.label==='Shelf 10').copies.some(copy=>copy.id==='copy-2'));
 assert.equal(moved.copies.find(copy=>copy.id==='copy-2').workId,'work-1');
