@@ -149,8 +149,9 @@ function fakeMarc(fields){
     const trace=[];const {api}=runtime();
     const failure=async()=>{throw new Error('offline')};
     assert.equal(values(await api.orchestrateISBNMetadata(ISBN,{openLibrary:failure,google:failure,nationalLibraries:[failure,failure],trace})).length,0,'All transient failures never fabricate metadata');
-    assert.equal(trace.length,4);
-    assert.ok(trace.every(entry=>entry.state==='TEMPORARY_ERROR'));
+    const primaryFailures=trace.filter(entry=>entry.strategy==='provider');
+    assert.equal(primaryFailures.length,4);
+    assert.ok(primaryFailures.every(entry=>entry.state==='TEMPORARY_ERROR'));
   }
   {
     let attempts=0;const {api}=runtime();

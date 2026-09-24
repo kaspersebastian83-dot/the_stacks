@@ -12,6 +12,7 @@ const suites=[
   'core-model-regression.test.js',
   'isbn-regression.test.js',
   'isbn-recognition-regression.test.js',
+  'isbn-rescue-regression.test.js',
   'retry-unidentified-regression.test.js',
   'scan-regression.test.js',
   'backup-roundtrip-regression.test.js',

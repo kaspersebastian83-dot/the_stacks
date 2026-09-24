@@ -54,7 +54,7 @@ const candidate={title:'The Resolved Book',authors:'Example Author',isbn:ISBN,is
   assert.match(app,/lookupISBNMetadataCandidates\(requested,current,\{trace\}\)/,'Retry reuses the hardened exact ISBN candidate pipeline');
   assert.match(app,/applyExactMetadataToUnidentifiedCopies\(booksRef\.current\|\|\[\],copyId,candidate\)/,'Retry applies selected identification semantics to the unresolved ISBN group');
   assert.match(app,/Metadata lookup incomplete\. Try again later\./,'Provider outage has retryable feedback');
-  assert.match(app,/No metadata found for ISBN \$\{requested\}\. Try Identify for manual search\./,'True no-result feedback keeps manual Identify available');
+  assert.match(app,/No trusted metadata was returned for ISBN \$\{isbn\}\. Try Identify for manual search\./,'True no-result feedback keeps manual Identify available');
   assert.doesNotMatch(app.slice(app.indexOf('async function retryUnidentifiedMetadata'),app.indexOf('function applyIdentification',app.indexOf('async function retryUnidentifiedMetadata'))),/searchMetadataCandidates|lookupGoogleBooksText/,'Automatic retry does not use fuzzy title/author search');
 
   const a=row('record-a','copy-a',{bookcase:'Oak',shelf:'A1',room:'Office',box:'Box 2',position:'01'});
