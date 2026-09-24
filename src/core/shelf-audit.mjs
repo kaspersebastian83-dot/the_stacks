@@ -77,7 +77,8 @@ function auditSummary(state){
   const correctlyShelved=[...expectedByISBN].map(([isbn,copies])=>({isbn,copies,count:matchedCounts.get(isbn)||0})).filter(group=>group.count>0);
   const manualNeeded=state.expected.filter(copy=>!copy.canonicalISBN&&!state.manualPresentIds.includes(copy.copyId));
   const manualPresent=state.expected.filter(copy=>!copy.canonicalISBN&&state.manualPresentIds.includes(copy.copyId));
-  return {events,missing,correctlyShelved,manualNeeded,manualPresent,expected:state.expected.length,scanned:events.length,matched:events.filter(event=>event.kind==='expected').length,unexpected:events.filter(event=>event.kind!=='expected').length,notInLibrary:events.filter(event=>event.kind==='not-owned').length};
+  const matchedByISBN=events.filter(event=>event.kind==='expected').length;
+  return {events,missing,correctlyShelved,manualNeeded,manualPresent,expected:state.expected.length,scanned:events.length,matched:matchedByISBN,matchedByISBN,accounted:matchedByISBN+manualPresent.length,unexpected:events.filter(event=>event.kind!=='expected').length,notInLibrary:events.filter(event=>event.kind==='not-owned').length};
 }
 
 export {CAMERA_DUPLICATE_MS,applyShelfAuditScan,auditCatalogCopies,auditShelfKey,auditSummary,canonicalAuditISBN,createShelfAuditState,finishShelfAudit,markShelfAuditPresent,undoShelfAuditScan};
