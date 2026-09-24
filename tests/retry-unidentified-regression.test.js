@@ -45,14 +45,14 @@ const row=(id,copyId,location,overrides={})=>api.normalizeBook({id,copyId,isbn:I
 const candidate={title:'The Resolved Book',authors:'Example Author',isbn:ISBN,isbns:[ISBN],reportedIsbns:[ISBN],metadataProvider:'openlibrary',metadataSource:'Open Library',metadataMatchMethod:'Exact ISBN via Open Library',metadataMatchEvidence:'IDENTIFIER_CONFIRMED',exactIsbn:true,publisher:'Example Press',year:'1985',pages:'240',language:'English',edition:'Second edition',format:'Print book',series:'Example Series',seriesNumber:'2',translators:['Translator Name'],editors:['Editor Name'],cover:'https://example.test/cover.jpg',tags:['fiction']};
 
 (async()=>{
-  assert.match(app,/function IntakeQueueView\([\s\S]*?onRetryMetadata,retryingIsbns/,'Organize list receives retry action state');
-  assert.match(app,/onRetryMetadata=\{retryUnidentifiedMetadata\} retryingIsbns=\{retryingIsbns\}/,'Organize list is wired to the retry action');
+  assert.match(app,/function IntakeQueueView\([\s\S]*?onRetryMetadata,onRetryAllISBNs,retryingIsbns/,'Organize list receives single and bulk retry actions');
+  assert.match(app,/onRetryMetadata=\{retryUnidentifiedMetadata\} onRetryAllISBNs=\{retryAllUnidentifiedMetadata\} retryingIsbns=\{retryingIsbns\}/,'Organize list is wired to both retry actions');
   assert.match(app,/onIdentify=\{setIdentifying\}/,'Identify still opens the existing assistant');
   assert.match(app,/Retry metadata/,'Visible Retry metadata label exists in both requested views');
   assert.match(app,/disabled=\{!isValidISBN\(book\.isbn\)\|\|retryingIsbns\?\.has/,'Invalid ISBN and running retry disable the list action');
   assert.match(app,/function BookcaseBookCard[\s\S]*?needsIdentification\(book\)[\s\S]*?Retry metadata/,'Needs identification card has a visible retry action');
   assert.match(app,/lookupISBNMetadataCandidates\(requested,current,\{trace\}\)/,'Retry reuses the hardened exact ISBN candidate pipeline');
-  assert.match(app,/applyExactMetadataToUnidentifiedCopies\(booksRef\.current\|\|\[\],copyId,candidate\)/,'Retry applies selected identification semantics to the unresolved ISBN group');
+  assert.match(app,/applyExactMetadataToUnidentifiedCopies\(source,current\.copyId\|\|current\.id,candidate\)/,'Shared retry operation applies selected identification semantics to the unresolved ISBN group');
   assert.match(app,/Metadata lookup incomplete\. Try again later\./,'Provider outage has retryable feedback');
   assert.match(app,/No trusted metadata was returned for ISBN \$\{isbn\}\. Try Identify for manual search\./,'True no-result feedback keeps manual Identify available');
   assert.doesNotMatch(app.slice(app.indexOf('async function retryUnidentifiedMetadata'),app.indexOf('function applyIdentification',app.indexOf('async function retryUnidentifiedMetadata'))),/searchMetadataCandidates|lookupGoogleBooksText/,'Automatic retry does not use fuzzy title/author search');
