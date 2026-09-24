@@ -23,6 +23,7 @@ const suites=[
   'physical-location-workflow-regression.test.js',
   'visual-bookcase-regression.test.js',
   'move-books-regression.test.js',
+  'shelf-audit-regression.test.js',
   'physical-library-integration.test.js',
   'physical-location-migration.test.js',
   'storage-mode-regression.test.js',

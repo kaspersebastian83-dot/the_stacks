@@ -154,7 +154,8 @@ assert.match(moveUI,/onMoveCopies\(\[copy\.id\],destination/,'Scanner moves one 
 assert.match(moveUI,/CameraBarcodeScanner active=\{cameraOn\} mode="move"/,'Scanner reuses camera infrastructure');
 assert.match(moveUI,/onSubmit=\{submit\}/,'Manual and hardware scanner Enter share the submission path');
 assert.doesNotMatch(moveUI,/processScan\(|insertScannedBook\(|addFoundBook\(/,'Relocation cannot use intake');
-assert.match(source,/if\(!silent\)makeSnapshot\('before-exact-copy-move'\)/,'Continuous scans avoid full-catalog snapshot per barcode');
+assert.match(moveUI,/onMoveCopies\(\[copy\.id\],destination,\{silent:true\}\)/,'Continuous scans request the snapshot-free move path');
+assert.match(source,/if\(!silent\)makeSnapshot\('before-exact-copy-move',forceSnapshot\)/,'Explicit moves keep the existing snapshot path');
 
 console.log('MOVE_BOOKS_REGRESSION_PASS');
 console.log('Exact single, batch, ambiguous ISBN, blank and unknown Copies, no-op, undo, and hierarchy: PASS');
