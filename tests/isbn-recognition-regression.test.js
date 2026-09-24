@@ -95,6 +95,14 @@ function fakeMarc(fields){
     const found=values(await api.lookupDnbByIsbn(ISBN));
     assert.equal(found[0].title,'Trusted Record','Single trusted exact-query record without 020 may be accepted');
     assert.equal(found[0].metadataMatchEvidence,'PROVIDER_EXACT_QUERY');
+    assert.equal(found[0].isbn,ISBN,'Accepted query-only candidate retains canonical catalog ISBN');
+    const selectedAgain=values(api.selectBestExactMetadataCandidates(found,ISBN))[0];
+    assert.equal(selectedAgain.metadataMatchEvidence,'PROVIDER_EXACT_QUERY','Repeated exact selection must not launder canonical ISBN into provider evidence');
+    const reconciled=values(api.reconcileExactMetadataCandidates([selectedAgain],ISBN))[0];
+    assert.equal(reconciled.metadataMatchEvidence,'PROVIDER_EXACT_QUERY','Reconciliation pass preserves inferred evidence');
+    assert.equal(reconciled.isbn,ISBN);
+    const sourceListDropped={...selectedAgain};delete sourceListDropped.reportedIsbns;
+    assert.equal(values(api.selectBestExactMetadataCandidates([sourceListDropped],ISBN))[0].metadataMatchEvidence,'PROVIDER_EXACT_QUERY','Canonical ISBN stays non-evidentiary even if source list is absent after selection');
   }
   {
     const {api}=nationalRuntime(async()=>response({records:[{title:'Wrong Record',authors:'Author',isbn:OTHER,isbns:[OTHER]}]}));
@@ -113,6 +121,7 @@ function fakeMarc(fields){
     const result=values(api.selectBestExactMetadataCandidates([exact({title:'Matching'}),exact({title:'Wrong',isbn:OTHER,isbns:[OTHER]})],ISBN));
     assert.equal(result.length,1,'Only exact candidate retained from mixed results');
     assert.equal(result[0].title,'Matching');
+    assert.equal(values(api.selectBestExactMetadataCandidates([{...exact(),reportedIsbns:[OTHER],isbn:ISBN,isbns:[]}],ISBN)).length,0,'Provider-reported contradictory identifier overrides canonical ISBN');
     assert.equal(values(api.selectBestExactMetadataCandidates([exact({isbn:'',isbns:[],metadataMatchEvidence:'PROVIDER_EXACT_QUERY',metadataProvider:'google',exactQueryIsbn:ISBN,exactQueryRecordCount:1})],ISBN)).length,0,'Broad/nontrusted query cannot self-assert exact evidence');
     assert.equal(values(api.selectBestExactMetadataCandidates([exact({isbn:'',isbns:[],metadataMatchEvidence:'PROVIDER_EXACT_QUERY',metadataProvider:'dnb',exactQueryIsbn:ISBN,exactQueryRecordCount:2})],ISBN)).length,0,'Multiple no-020 records cannot use provider evidence');
     assert.equal(values(api.selectBestExactMetadataCandidates([exact({isbn:'',isbns:[],authors:'',publisher:'',year:'',metadataMatchEvidence:'PROVIDER_EXACT_QUERY',metadataProvider:'dnb',exactQueryIsbn:ISBN,exactQueryRecordCount:1})],ISBN)).length,0,'A bare title is insufficient for no-020 provider evidence');
@@ -162,6 +171,16 @@ function fakeMarc(fields){
     assert.equal(conflict.cover,'','Different edition/title is not merged');
     const physical=values(api.selectBestExactMetadataCandidates([exact({format:'E-book',isPhysical:false}),exact({format:'Print book',isPhysical:true,metadataProvider:'dnb'})],ISBN));
     assert.equal(physical[0].format,'Print book','Physical manifestation takes precedence');
+  }
+  {
+    const confirmed=exact({title:'Shared Title',publisher:'',cover:'primary cover',metadataProvider:'openlibrary'});
+    const inferred={title:'Shared Title',authors:'Example Author',publisher:'Inferred Publisher',isbn:'',isbns:[],reportedIsbns:[],metadataProvider:'dnb',metadataSource:'DNB',metadataMatchEvidence:'PROVIDER_EXACT_QUERY',exactQueryIsbn:ISBN,exactQueryRecordCount:1,exactIsbn:true};
+    const reconciled=values(api.reconcileExactMetadataCandidates([confirmed,inferred],ISBN))[0];
+    assert.equal(reconciled.metadataMatchEvidence,'IDENTIFIER_CONFIRMED');
+    assert.equal(reconciled.publisher,'','Provider-exact query candidate cannot contribute fields to an identifier-confirmed candidate');
+    const onlyInferred=values(api.reconcileExactMetadataCandidates([inferred],ISBN))[0];
+    assert.equal(onlyInferred.metadataMatchEvidence,'PROVIDER_EXACT_QUERY','Provider-exact candidate remains selectable without identifier-confirmed peers');
+    assert.equal(onlyInferred.isbn,ISBN);
   }
   {
     const record=fakeMarc({data:[['245',[['a','  A  title : '],['b',' A subtitle / ']]],['100',[['a','Writer, Example.'],['4','aut']]],['700',[['a','Translator, Example.'],['4','trl']]],['700',[['a','Editor, Example.'],['4','edt']]],['020',[['a',ISBN]]],['264',[['b','Publisher :'],['c','©1985']], '1'],['338',[['a','volume']]]],control:[['001','record-1']]});

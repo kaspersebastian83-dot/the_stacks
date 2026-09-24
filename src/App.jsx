@@ -817,6 +817,14 @@ function normalizedCandidateIsbns(meta){
   const reported=Array.isArray(meta?.reportedIsbns)?meta.reportedIsbns:[...(Array.isArray(meta?.isbns)?meta.isbns:[]),meta?.isbn||''];
   return uniq(reported.map(normalizeISBN).filter(isbn=>isbn&&isValidISBN(isbn)).map(toISBN13));
 }
+function providerReportedIsbns(meta){
+  if(Array.isArray(meta?.reportedIsbns))return uniq(meta.reportedIsbns.map(normalizeISBN).filter(isbn=>isbn&&isValidISBN(isbn)).map(toISBN13));
+  const identifiers=[...(Array.isArray(meta?.isbns)?meta.isbns:[])];
+  // Once selected, isbn is our canonical storage value. If source IDs were dropped, never reuse it as evidence.
+  const alreadySelected=meta?.exactIsbn&&['IDENTIFIER_CONFIRMED','PROVIDER_EXACT_QUERY'].includes(meta?.metadataMatchEvidence);
+  if(!alreadySelected)identifiers.push(meta?.isbn||'');
+  return uniq(identifiers.map(normalizeISBN).filter(isbn=>isbn&&isValidISBN(isbn)).map(toISBN13));
+}
 function isExactIsbnCandidate(meta,requestedIsbn){
   const requested=toISBN13(normalizeISBN(requestedIsbn));
   return Boolean(requested&&isValidISBN(requested)&&normalizedCandidateIsbns(meta).includes(requested));
@@ -830,7 +838,7 @@ function providerPriority(meta){return METADATA_PROVIDER_PRIORITY[meta?.metadata
 function cleanBibliographicTitle(value){return String(value||'').replace(/\s+/g,' ').trim().replace(/\s*[\/:;,]+\s*$/,'').trim();}
 function hasMeaningfulMetadataTitle(value){const title=cleanBibliographicTitle(value);return Boolean(title&&!/^(?:unidentified book|unknown book|untitled)$/i.test(title));}
 function metadataMatchEvidence(candidate,requestedIsbn){
-  const requested=toISBN13(normalizeISBN(requestedIsbn)),reported=normalizedCandidateIsbns(candidate);
+  const requested=toISBN13(normalizeISBN(requestedIsbn)),reported=providerReportedIsbns(candidate);
   if(!requested||!isValidISBN(requested)||!hasMeaningfulMetadataTitle(candidate?.title))return'UNCONFIRMED';
   if(reported.includes(requested))return'IDENTIFIER_CONFIRMED';
   // Only a single bibliographic result from our trusted exact ISBN SRU request may substitute for missing 020 data.
@@ -843,7 +851,7 @@ function selectBestExactMetadataCandidates(candidates,requestedIsbn){
   const selected=[],seen=new Set(),requested=toISBN13(requestedIsbn);
   candidates.filter(Boolean).map(normalizeMetadataCandidate).forEach((candidate,index)=>{
     const evidence=metadataMatchEvidence(candidate,requested);if(evidence==='UNCONFIRMED')return;
-    const reportedIsbns=normalizedCandidateIsbns(candidate),key=[candidate.metadataProvider||'',candidate.externalRecordId||'',normalizedTitle(candidate.title),normalizedTitle(candidate.authors),String(candidate.year||''),String(candidate.format||''),reportedIsbns.join(',')].join('|');
+    const reportedIsbns=providerReportedIsbns(candidate),key=[candidate.metadataProvider||'',candidate.externalRecordId||'',normalizedTitle(candidate.title),normalizedTitle(candidate.authors),String(candidate.year||''),String(candidate.format||''),reportedIsbns.join(',')].join('|');
     if(seen.has(key))return;seen.add(key);
     selected.push({...candidate,reportedIsbns,isbn:requested,exactIsbn:true,metadataMatchEvidence:evidence,bibliographicQuality:metadataQuality(candidate),_providerOrder:index});
   });
@@ -854,7 +862,7 @@ function hasUsableMetadata(meta){return metadataQualityLevel(meta)!=='none';}
 function normalizeMetadataCandidate(meta){meta=meta||{};return {...meta,title:cleanBibliographicTitle(meta.title),originalPublicationYear:normalizeOriginalPublicationYear(meta.originalPublicationYear),series:normalizeSeriesText(meta.series),seriesNumber:normalizeSeriesNumber(meta.seriesNumber),translators:normalizePersonList(meta.translators),editors:normalizePersonList(meta.editors)};}
 function canReconcileExactMetadata(primary,other,requested){
   if(primary.metadataMatchEvidence!=='IDENTIFIER_CONFIRMED'||other.metadataMatchEvidence!=='IDENTIFIER_CONFIRMED')return false;
-  if(normalizedCandidateIsbns(primary).some(isbn=>isbn!==requested)||normalizedCandidateIsbns(other).some(isbn=>isbn!==requested))return false;
+  if(providerReportedIsbns(primary).some(isbn=>isbn!==requested)||providerReportedIsbns(other).some(isbn=>isbn!==requested))return false;
   if(normalizedTitle(primary.title)!==normalizedTitle(other.title))return false;
   if(physicalMetadataPreference(primary)*physicalMetadataPreference(other)===-1)return false;
   return !['authors','publisher','year','edition','language'].some(field=>primary[field]&&other[field]&&normalizedTitle(primary[field])!==normalizedTitle(other[field]));
