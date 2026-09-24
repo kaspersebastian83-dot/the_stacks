@@ -16,13 +16,14 @@ const STORAGE_MODE_KEY='bookCatalog:storageMode:v1';
 const IDB_NAME='the-stacks-catalog-db';
 const IDB_VERSION=1;
 const IDB_STORE='kv';
-const APP_VERSION='3.10.3';
+const APP_VERSION='3.10.4';
 const DEFAULT_SETTINGS={theme:'light',defaultStatus:'unread',defaultCollection:'',defaultLocation:blankLocation(),confirmDestructive:true,autoJsonSnapshot:true,backupReminderDays:14,compactMobile:false,showShortcutHints:true,preferGoogleBooksFallback:true};
 const STATUS=[
   ['unread','Unread'],['want','Want to read'],['reading','Currently reading'],['read','Read'],['dnf','Did not finish'],['reference','Reference only']
 ];
 const STATUS_LABEL=Object.fromEntries(STATUS);
 const CHANGELOG=[
+  {version:'3.10.4',date:'2026-09-24',items:['Improved ISBN recognition with ISBN-10/13 national-library rescue, conservative exact-match reconciliation, and clearer temporary metadata failure handling.']},
   {version:'3.10.3',date:'2026-09-23',items:['Unified scanning, My Copy, and physical Bookcase placement around Copy.location, with automatic recovery of existing Bookcase and Shelf data.']},
   {version:'3.10.2',date:'2026-09-23',items:['Polished Visual Bookcase with deterministic muted spines, clearer shelf structure, and a selected-Copy details and actions panel.']},
   {version:'3.10.1',date:'2026-09-23',items:['Added a visual physical Bookcase view with exact-Copy shelf cards and direct Move and Scan to Shelf actions.']},
@@ -813,25 +814,63 @@ async function fetchMetadataResponse(url,fetchImpl=fetch,timeoutMs=METADATA_REQU
   throw lastError||new Error('Metadata request failed');
 }
 function normalizedCandidateIsbns(meta){
-  return uniq([...(Array.isArray(meta?.isbns)?meta.isbns:[]),meta?.isbn||''].map(normalizeISBN).filter(isbn=>isbn&&isValidISBN(isbn)).map(toISBN13));
+  const reported=Array.isArray(meta?.reportedIsbns)?meta.reportedIsbns:[...(Array.isArray(meta?.isbns)?meta.isbns:[]),meta?.isbn||''];
+  return uniq(reported.map(normalizeISBN).filter(isbn=>isbn&&isValidISBN(isbn)).map(toISBN13));
 }
 function isExactIsbnCandidate(meta,requestedIsbn){
   const requested=toISBN13(normalizeISBN(requestedIsbn));
   return Boolean(requested&&isValidISBN(requested)&&normalizedCandidateIsbns(meta).includes(requested));
 }
 function metadataQuality(meta){
-  if(!String(meta?.title||'').trim())return 0;
+  if(!hasMeaningfulMetadataTitle(meta?.title))return 0;
   return 3+(meta.authors?2:0)+(meta.publisher?1:0)+(meta.year?1:0)+(meta.language?1:0)+(meta.edition?1:0)+(meta.format?1:0);
 }
 function metadataQualityLevel(meta){const score=metadataQuality(meta);return score===0?'none':score>=7?'good':'weak';}
 function providerPriority(meta){return METADATA_PROVIDER_PRIORITY[meta?.metadataProvider]??9;}
+function cleanBibliographicTitle(value){return String(value||'').replace(/\s+/g,' ').trim().replace(/\s*[\/:;,]+\s*$/,'').trim();}
+function hasMeaningfulMetadataTitle(value){const title=cleanBibliographicTitle(value);return Boolean(title&&!/^(?:unidentified book|unknown book|untitled)$/i.test(title));}
+function metadataMatchEvidence(candidate,requestedIsbn){
+  const requested=toISBN13(normalizeISBN(requestedIsbn)),reported=normalizedCandidateIsbns(candidate);
+  if(!requested||!isValidISBN(requested)||!hasMeaningfulMetadataTitle(candidate?.title))return'UNCONFIRMED';
+  if(reported.includes(requested))return'IDENTIFIER_CONFIRMED';
+  // Only a single bibliographic result from our trusted exact ISBN SRU request may substitute for missing 020 data.
+  // A returned valid but different ISBN is never treated as query evidence.
+  if(reported.length||!['dnb','loc'].includes(candidate?.metadataProvider)||candidate?.metadataMatchEvidence!=='PROVIDER_EXACT_QUERY'||candidate?.exactQueryIsbn!==requested||candidate?.exactQueryRecordCount!==1)return'UNCONFIRMED';
+  return Boolean(String(candidate.authors||'').trim()||String(candidate.publisher||'').trim()||String(candidate.year||'').trim())?'PROVIDER_EXACT_QUERY':'UNCONFIRMED';
+}
+function physicalMetadataPreference(candidate){if(candidate?.isPhysical)return 1;return /(?:e-?book|online|electronic)/i.test(String(candidate?.format||''))?-1:0;}
 function selectBestExactMetadataCandidates(candidates,requestedIsbn){
-  // Equal quality: prefer physical material, then provider priority, then stable response order.
-  return candidates.filter(Boolean).map(normalizeMetadataCandidate).filter(candidate=>isExactIsbnCandidate(candidate,requestedIsbn)).map((candidate,index)=>({...candidate,isbn:toISBN13(requestedIsbn),exactIsbn:true,bibliographicQuality:metadataQuality(candidate),_providerOrder:index})).sort((a,b)=>(b.bibliographicQuality||0)-(a.bibliographicQuality||0)||Number(b.isPhysical)-Number(a.isPhysical)||providerPriority(a)-providerPriority(b)||(a._providerOrder||0)-(b._providerOrder||0)).map(({_providerOrder,...candidate})=>candidate);
+  const selected=[],seen=new Set(),requested=toISBN13(requestedIsbn);
+  candidates.filter(Boolean).map(normalizeMetadataCandidate).forEach((candidate,index)=>{
+    const evidence=metadataMatchEvidence(candidate,requested);if(evidence==='UNCONFIRMED')return;
+    const reportedIsbns=normalizedCandidateIsbns(candidate),key=[candidate.metadataProvider||'',candidate.externalRecordId||'',normalizedTitle(candidate.title),normalizedTitle(candidate.authors),String(candidate.year||''),String(candidate.format||''),reportedIsbns.join(',')].join('|');
+    if(seen.has(key))return;seen.add(key);
+    selected.push({...candidate,reportedIsbns,isbn:requested,exactIsbn:true,metadataMatchEvidence:evidence,bibliographicQuality:metadataQuality(candidate),_providerOrder:index});
+  });
+  return selected.sort((a,b)=>(b.metadataMatchEvidence==='IDENTIFIER_CONFIRMED')-(a.metadataMatchEvidence==='IDENTIFIER_CONFIRMED')||physicalMetadataPreference(b)-physicalMetadataPreference(a)||(b.bibliographicQuality||0)-(a.bibliographicQuality||0)||providerPriority(a)-providerPriority(b)||(a._providerOrder||0)-(b._providerOrder||0)).map(({_providerOrder,...candidate})=>candidate);
 }
 function hasGoodExactMetadata(candidates,isbn){return selectBestExactMetadataCandidates(candidates,isbn).some(candidate=>metadataQualityLevel(candidate)==='good');}
 function hasUsableMetadata(meta){return metadataQualityLevel(meta)!=='none';}
-function normalizeMetadataCandidate(meta){meta=meta||{};return {...meta,originalPublicationYear:normalizeOriginalPublicationYear(meta.originalPublicationYear),series:normalizeSeriesText(meta.series),seriesNumber:normalizeSeriesNumber(meta.seriesNumber),translators:normalizePersonList(meta.translators),editors:normalizePersonList(meta.editors)};}
+function normalizeMetadataCandidate(meta){meta=meta||{};return {...meta,title:cleanBibliographicTitle(meta.title),originalPublicationYear:normalizeOriginalPublicationYear(meta.originalPublicationYear),series:normalizeSeriesText(meta.series),seriesNumber:normalizeSeriesNumber(meta.seriesNumber),translators:normalizePersonList(meta.translators),editors:normalizePersonList(meta.editors)};}
+function canReconcileExactMetadata(primary,other,requested){
+  if(primary.metadataMatchEvidence!=='IDENTIFIER_CONFIRMED'||other.metadataMatchEvidence!=='IDENTIFIER_CONFIRMED')return false;
+  if(normalizedCandidateIsbns(primary).some(isbn=>isbn!==requested)||normalizedCandidateIsbns(other).some(isbn=>isbn!==requested))return false;
+  if(normalizedTitle(primary.title)!==normalizedTitle(other.title))return false;
+  if(physicalMetadataPreference(primary)*physicalMetadataPreference(other)===-1)return false;
+  return !['authors','publisher','year','edition','language'].some(field=>primary[field]&&other[field]&&normalizedTitle(primary[field])!==normalizedTitle(other[field]));
+}
+function reconcileExactMetadataCandidates(candidates,requestedIsbn){
+  const sorted=selectBestExactMetadataCandidates(candidates,requestedIsbn);if(!sorted.length)return[];
+  const primary=sorted[0],requested=toISBN13(requestedIsbn),merged={...primary},sources=[primary.metadataSource].filter(Boolean);
+  for(const other of sorted.slice(1)){
+    if(!canReconcileExactMetadata(primary,other,requested))continue;
+    for(const field of ['authors','publisher','year','edition','language','pages','cover','originalPublicationYear','series','seriesNumber','format'])if(!merged[field]&&other[field])merged[field]=other[field];
+    for(const field of ['translators','editors','tags'])if(!(merged[field]||[]).length&&(other[field]||[]).length)merged[field]=other[field];
+    if(other.metadataSource&&!sources.includes(other.metadataSource))sources.push(other.metadataSource);
+  }
+  merged.metadataContributingSources=sources;
+  return [merged,...sorted.slice(1)];
+}
 function contributorRoleKind(value){const role=String(value||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');const code=role.split(/[\/#]/).pop().replace(/[^a-z]/g,'');if(code==='trl'||/(^|\b)(translator|ubersetzer(?:in)?|traducteur|traductor)(\b|$)/.test(role))return'translator';if(code==='edt'||/(^|\b)(editor|herausgeber(?:in)?|editeur|redakteur)(\b|$)/.test(role))return'editor';return'';}
 
 function marcElements(node,localName){return node?Array.from(node.getElementsByTagNameNS('*',localName)||[]):[];}
@@ -839,7 +878,7 @@ function marcDatafields(record,tag){return marcElements(record,'datafield').filt
 function marcControlfield(record,tag){return marcElements(record,'controlfield').find(field=>field.getAttribute('tag')===tag)?.textContent?.trim()||'';}
 function marcSubfields(field,code){return marcElements(field,'subfield').filter(item=>item.getAttribute('code')===code).map(item=>String(item.textContent||'').trim()).filter(Boolean);}
 function firstMarcSubfield(record,tag,code,filter){const field=marcDatafields(record,tag).find(item=>!filter||filter(item));return field?marcSubfields(field,code)[0]||'':'';}
-function cleanMarcText(value){return String(value||"").trim().replace(/\s*[\/:;,]\s*$/,"").trim();}
+function cleanMarcText(value){return String(value||'').replace(/\s+/g,' ').trim().replace(/\s*[\/:;,]+\s*$/,'').replace(/([^.])\.$/,'$1').trim();}
 function marcContributors(record){const translators=[],editors=[];marcDatafields(record,'700').forEach(field=>{const name=cleanMarcText(marcSubfields(field,'a')[0]||'');if(!name)return;const roles=[...marcSubfields(field,'4'),...marcSubfields(field,'e')].map(contributorRoleKind);if(roles.includes('translator'))translators.push(name);if(roles.includes('editor'))editors.push(name);});return{translators:normalizePersonList(translators),editors:normalizePersonList(editors)};}
 function marcIsbns(record){return uniq(marcDatafields(record,'020').flatMap(field=>marcSubfields(field,'a')).flatMap(extractMarcIsbn));}
 function marcPrimaryAuthor(record){
@@ -882,24 +921,45 @@ function parseMarcBibliographicRecord(record,{provider,label}={}){
   const recordId=provider==='loc'?cleanMarcText(firstMarcSubfield(record,'010','a')||marcControlfield(record,'001')):marcControlfield(record,'001');
   return{title:[titleMain,subtitle].filter(Boolean).join(': '),authors:marcPrimaryAuthor(record),year:publication.year,publisher:publication.publisher,pages,language:marcLanguage(record),edition:cleanMarcText(firstMarcSubfield(record,'250','a')),format:material.format,translators:contributors.translators,editors:contributors.editors,originalPublicationYear:'',series:'',seriesNumber:'',cover:'',tags:[],isbn:isbns[0]||'',isbns,isPhysical:material.isPhysical,externalRecordId:recordId,metadataProvider:provider||'',metadataSource:label||'',metadataConfidence:'High',metadataMatchMethod:'Exact ISBN via SRU'};
 }
-function parseSruMarcResponse(xmlText,provider){
+function parseSruMarcResponse(xmlText,provider,diagnostic={}){
   try{
     const doc=new DOMParser().parseFromString(String(xmlText||''),'application/xml');
-    if(marcElements(doc,'parsererror').length||marcElements(doc,'diagnostic').length)return[];
+    if(marcElements(doc,'parsererror').length||marcElements(doc,'diagnostic').length){diagnostic.parseError=true;return[];}
     const label=provider==='dnb'?'Deutsche Nationalbibliothek':'Library of Congress';
     return marcElements(doc,'record').filter(record=>String(record.namespaceURI||'').includes('MARC21')).map(record=>parseMarcBibliographicRecord(record,{provider,label})).filter(Boolean);
-  }catch{return[];}
+  }catch{diagnostic.parseError=true;return[];}
 }
-function buildDnbSruUrl(isbn){const url=new URL('https://services.dnb.de/sru/dnb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`dnb.isbn="${toISBN13(isbn)}"`,maximumRecords:'5',recordSchema:'MARC21-xml'});return url.toString();}
-function buildLcSruUrl(isbn){const url=new URL('https://lx2.loc.gov/sru/lcdb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`bath.isbn="${toISBN13(isbn)}"`,maximumRecords:'5',recordSchema:'marcxml'});return url.toString();}
-function buildLcProxyUrl(isbn){const url=new URL(LOC_PROXY_URL);url.search=new URLSearchParams({isbn:toISBN13(isbn)});return url.toString();}
+function buildDnbSruUrl(isbn){const url=new URL('https://services.dnb.de/sru/dnb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`dnb.isbn="${normalizeISBN(isbn)}"`,maximumRecords:'5',recordSchema:'MARC21-xml'});return url.toString();}
+function buildLcSruUrl(isbn){const url=new URL('https://lx2.loc.gov/sru/lcdb');url.search=new URLSearchParams({version:'1.1',operation:'searchRetrieve',query:`bath.isbn="${normalizeISBN(isbn)}"`,maximumRecords:'5',recordSchema:'marcxml'});return url.toString();}
+function buildLcProxyUrl(isbn){const url=new URL(LOC_PROXY_URL);url.search=new URLSearchParams({isbn:normalizeISBN(isbn)});return url.toString();}
 function buildGoogleBooksProxyUrl(isbn){const normalized=normalizeISBN(isbn);if(!normalized||!isValidISBN(normalized))return'';const url=new URL(GOOGLE_BOOKS_PROXY_URL);url.search=new URLSearchParams({isbn:normalized});return url.toString();}
-async function lookupSruProviderByIsbn(isbn,{provider,url,fetchImpl=fetch,trace,retryDelayMs,timeoutMs=METADATA_REQUEST_TIMEOUT_MS}={}){
+async function lookupSruProviderByIsbn(isbn,{provider,buildUrl,fetchImpl=fetch,trace,retryDelayMs,timeoutMs=METADATA_REQUEST_TIMEOUT_MS}={}){
   const options={trace,retryDelayMs};
-  try{const response=await fetchMetadataResponse(url,fetchImpl,timeoutMs,options);if(!response.ok){recordMetadataTrace(options,provider,'exact-isbn',metadataFailureState(response),{httpStatus:response.status});return[];}const candidates=parseSruMarcResponse(await response.text(),provider);const exact=selectBestExactMetadataCandidates(candidates,isbn);recordMetadataTrace(options,provider,'exact-isbn',exact.length?'FOUND':(candidates.length?'WRONG_ISBN':'NO_RECORD'));return exact;}catch(err){recordMetadataTrace(options,provider,'exact-isbn',metadataFailureState(err));return[];}
+  const requested=toISBN13(isbn),collected=[],inferredRecords=new Set();let contradictoryIdentifiers=false;
+  for(const variant of isbnVariants(requested)){
+    const strategy='exact-isbn-'+variant;
+    try{
+      const response=await fetchMetadataResponse(buildUrl(variant),fetchImpl,timeoutMs,options);
+      if(!response.ok){recordMetadataTrace(options,provider,strategy,metadataFailureState(response),{httpStatus:response.status});continue;}
+      const diagnostic={},candidates=parseSruMarcResponse(await response.text(),provider,diagnostic);
+      if(diagnostic.parseError){recordMetadataTrace(options,provider,strategy,'PARSE_ERROR');continue;}
+      candidates.forEach(candidate=>{
+        const identifiers=normalizedCandidateIsbns(candidate);
+        if(identifiers.length&&!identifiers.includes(requested))contradictoryIdentifiers=true;
+        if(!identifiers.length&&hasMeaningfulMetadataTitle(candidate.title))inferredRecords.add(candidate.externalRecordId||[normalizedTitle(candidate.title),normalizedTitle(candidate.authors),String(candidate.year||'')].join('|'));
+      });
+      const evidenced=candidates.map(candidate=>({...candidate,exactQueryIsbn:requested,exactQueryRecordCount:candidates.length,metadataMatchEvidence:normalizedCandidateIsbns(candidate).length?'UNCONFIRMED':'PROVIDER_EXACT_QUERY'}));
+      const exact=selectBestExactMetadataCandidates(evidenced,requested);
+      recordMetadataTrace(options,provider,strategy,exact.length?'FOUND':(candidates.length?(candidates.some(candidate=>normalizedCandidateIsbns(candidate).length)?'WRONG_ISBN':'UNCONFIRMED'):'NO_RECORD'),{matchEvidence:exact[0]?.metadataMatchEvidence||''});
+      collected.push(...exact);
+    }catch(err){recordMetadataTrace(options,provider,strategy,metadataFailureState(err));}
+  }
+  // A no-020 inference cannot survive contradictory identifiers or distinct no-020 records across the two equivalent queries.
+  if(collected.some(candidate=>candidate.metadataMatchEvidence==='PROVIDER_EXACT_QUERY')&&(contradictoryIdentifiers||inferredRecords.size!==1))recordMetadataTrace(options,provider,'variant-reconciliation',contradictoryIdentifiers?'WRONG_ISBN':'UNCONFIRMED');
+  return selectBestExactMetadataCandidates(collected.filter(candidate=>candidate.metadataMatchEvidence!=='PROVIDER_EXACT_QUERY'||(!contradictoryIdentifiers&&inferredRecords.size===1)),requested);
 }
-async function lookupDnbByIsbn(isbn,options={}){return lookupSruProviderByIsbn(isbn,{provider:'dnb',url:buildDnbSruUrl(isbn),...options});}
-async function lookupLibraryOfCongressByIsbn(isbn,options={}){return lookupSruProviderByIsbn(isbn,{provider:'loc',url:buildLcProxyUrl(isbn),...options});}
+async function lookupDnbByIsbn(isbn,options={}){return lookupSruProviderByIsbn(isbn,{provider:'dnb',buildUrl:buildDnbSruUrl,...options});}
+async function lookupLibraryOfCongressByIsbn(isbn,options={}){return lookupSruProviderByIsbn(isbn,{provider:'loc',buildUrl:buildLcProxyUrl,...options});}
 const BROWSER_NATIONAL_LIBRARY_PROVIDERS=[lookupDnbByIsbn,lookupLibraryOfCongressByIsbn];
 
 function openLibraryContributorNames(book,kind){return normalizePersonList((Array.isArray(book?.contributors)?book.contributors:[]).filter(contributor=>contributor&&typeof contributor==='object'&&contributorRoleKind(contributor.role)===kind).map(contributor=>contributor.name));}
@@ -937,28 +997,39 @@ async function lookupGoogleBooks(isbn){return (await lookupGoogleBooksISBNCandid
 async function orchestrateISBNMetadata(isbn,providers={}){
   const requested=toISBN13(normalizeISBN(isbn));if(!requested||!isValidISBN(requested))return[];
   const openLibrary=providers.openLibrary||lookupOpenLibraryISBNCandidates;
-  const google=providers.google||((value)=>lookupGoogleBooksISBNCandidates(value));
+  const google=providers.google||((value,options)=>lookupGoogleBooksISBNCandidates(value,null,options));
   const nationalLibraries=providers.nationalLibraries||BROWSER_NATIONAL_LIBRARY_PROVIDERS;
+  const options={trace:providers.trace,retryDelayMs:providers.retryDelayMs,timeoutMs:providers.timeoutMs};
   const candidates=[];
-  const safeLookup=async lookup=>{try{const result=await lookup(requested);return Array.isArray(result)?result:result?[result]:[];}catch{return[];}};
-  candidates.push(...await safeLookup(openLibrary));
-  if(hasGoodExactMetadata(candidates,requested))return selectBestExactMetadataCandidates(candidates,requested);
-  candidates.push(...await safeLookup(google));
-  if(hasGoodExactMetadata(candidates,requested))return selectBestExactMetadataCandidates(candidates,requested);
-  const nationalResults=await Promise.all(nationalLibraries.map(safeLookup));
-  nationalResults.forEach(result=>candidates.push(...result));
-  return selectBestExactMetadataCandidates(candidates,requested);
+  const safeLookup=async (lookup,name)=>{try{const result=await lookup(requested,options);return{source:name,candidates:Array.isArray(result)?result:result?[result]:[]};}catch(err){recordMetadataTrace(options,name,'provider',metadataFailureState(err));return{source:name,candidates:[]};}};
+  // Start both fast exact-ISBN sources together; only wait briefly for the companion after a rich match.
+  const fast=[safeLookup(openLibrary,'openlibrary'),safeLookup(google,'google')];
+  const first=await Promise.race(fast);candidates.push(...first.candidates);
+  const remaining=fast[first.source==='openlibrary'?1:0];
+  if(hasGoodExactMetadata(candidates,requested)){
+    const companion=await Promise.race([remaining,metadataRetryDelay(providers.fastComplementWaitMs??250).then(()=>null)]);
+    if(companion)candidates.push(...companion.candidates);
+    return reconcileExactMetadataCandidates(candidates,requested);
+  }
+  candidates.push(...(await remaining).candidates);
+  if(hasGoodExactMetadata(candidates,requested))return reconcileExactMetadataCandidates(candidates,requested);
+  // National libraries are rescue sources; do not launch LOC once DNB has supplied a rich exact match.
+  for(const [index,lookup] of nationalLibraries.entries()){
+    const result=await safeLookup(lookup,index===0?'dnb':'loc');candidates.push(...result.candidates);
+    if(hasGoodExactMetadata(candidates,requested))break;
+  }
+  return reconcileExactMetadataCandidates(candidates,requested);
 }
-function lookupISBNMetadataBaseCandidates(isbn){
+function lookupISBNMetadataBaseCandidates(isbn,options={}){
   const requested=toISBN13(normalizeISBN(isbn));if(!requested||!isValidISBN(requested))return Promise.resolve([]);
   if(!ISBN_METADATA_PROMISE_CACHE.has(requested)){
-    const request=orchestrateISBNMetadata(requested);ISBN_METADATA_PROMISE_CACHE.set(requested,request);
+    const request=orchestrateISBNMetadata(requested,options);ISBN_METADATA_PROMISE_CACHE.set(requested,request);
     request.then(candidates=>{if(!candidates.length&&ISBN_METADATA_PROMISE_CACHE.get(requested)===request)ISBN_METADATA_PROMISE_CACHE.delete(requested);},()=>ISBN_METADATA_PROMISE_CACHE.delete(requested));
   }
   return ISBN_METADATA_PROMISE_CACHE.get(requested);
 }
 async function lookupISBNMetadataCandidates(isbn,book){return (await lookupISBNMetadataBaseCandidates(isbn)).map(candidate=>enrichCandidateMeta(book||{isbn},candidate,{metadataSource:candidate.metadataSource,metadataMatchMethod:candidate.metadataMatchMethod}));}
-async function lookupBook(isbn){return (await lookupISBNMetadataBaseCandidates(isbn))[0]||null;}
+async function lookupBook(isbn,options={}){return (await lookupISBNMetadataBaseCandidates(isbn,options))[0]||null;}
 
 async function lookupGoogleBooksText(title,authors){
   try{
@@ -2461,9 +2532,9 @@ ${recovery}`);
       const saved=insertScannedBook(copy);const editionCopies=booksRef.current.filter(b=>b.editionId===saved.editionId).length;
       if(!quiet)toast(`Added physical copy ${editionCopies}: ${existing.title}`);return {state:'copy',book:saved,detail:`Copy ${editionCopies} of this edition`};
     }
-    if(!quiet)toast(`Looking up ${isbn}…`);const lookup=await lookupBook(isbn);const meta=hasUsableMetadata(lookup)?lookup:null;const base=normalizeBook({isbn,title:meta?.title||'Unidentified book',authors:meta?.authors||'',originalPublicationYear:meta?.originalPublicationYear||'',series:meta?.series||'',seriesNumber:meta?.seriesNumber||'',year:meta?.year||'',publisher:meta?.publisher||'',translators:meta?.translators||[],editors:meta?.editors||[],pages:meta?.pages||'',language:meta?.language||'',edition:meta?.edition||'',format:meta?.format||'',cover:meta?.cover||'',tags:meta?.tags||[],metadataSource:meta?.metadataSource||'',metadataConfidence:meta?.metadataConfidence||'',metadataMatchMethod:meta?.metadataMatchMethod||'',metadataUpdatedAt:meta?new Date().toISOString():'',collections:col,status:scanStatus,location:scanLocation,reviewed:false,needsIdentification:!meta});
+    if(!quiet)toast(`Looking up ${isbn}…`);const metadataTrace=[];const lookup=await lookupBook(isbn,{trace:metadataTrace});const meta=hasUsableMetadata(lookup)?lookup:null;const lookupIncomplete=metadataTrace.some(entry=>['RATE_LIMITED','TEMPORARY_ERROR','TIMEOUT','HTTP_ERROR','PARSE_ERROR'].includes(entry.state));const base=normalizeBook({isbn,title:meta?.title||'Unidentified book',authors:meta?.authors||'',originalPublicationYear:meta?.originalPublicationYear||'',series:meta?.series||'',seriesNumber:meta?.seriesNumber||'',year:meta?.year||'',publisher:meta?.publisher||'',translators:meta?.translators||[],editors:meta?.editors||[],pages:meta?.pages||'',language:meta?.language||'',edition:meta?.edition||'',format:meta?.format||'',cover:meta?.cover||'',tags:meta?.tags||[],metadataSource:meta?.metadataSource||'',metadataConfidence:meta?.metadataConfidence||'',metadataMatchMethod:meta?.metadataMatchMethod||'',metadataUpdatedAt:meta?new Date().toISOString():'',collections:col,status:scanStatus,location:scanLocation,reviewed:false,needsIdentification:!meta});
     const book=normalizeBook({...base,copyId:base.id,workId:v3WorkId(base),editionId:v3EditionId(base),catalogModel:NATIVE_CATALOG_MODEL});const saved=insertScannedBook(book);
-    if(!quiet)toast(meta?`Added: ${meta.title}`:`Added ${isbn} — needs identification`);if(!meta&&!options.silentReview)setEditing(saved);return {state:meta?'added':'review',book:saved,detail:meta?`Metadata from ${meta.metadataSource||'catalog lookup'}`:'Added — needs identification'};
+    if(!quiet)toast(meta?`Added: ${meta.title}`:lookupIncomplete?`Added ${isbn} — metadata lookup incomplete; retry identification`:`Added ${isbn} — needs identification`);if(!meta&&!options.silentReview)setEditing(saved);return {state:meta?'added':'review',book:saved,detail:meta?`Metadata from ${meta.metadataSource||'catalog lookup'}`:lookupIncomplete?'Added — metadata lookup incomplete; retry identification':'Added — needs identification',metadataTrace,retryable:!meta&&lookupIncomplete};
   }
   async function processEasyScan(raw,session){return processScan(raw,{...session,quiet:true,silentReview:true})}
   function lookupFindBook(raw){return lookupOwnedISBN(nativeCatalogRef.current,raw)}

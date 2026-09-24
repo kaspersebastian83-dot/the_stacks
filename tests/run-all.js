@@ -11,6 +11,7 @@ const suites=[
   'ai-export-regression.test.js',
   'core-model-regression.test.js',
   'isbn-regression.test.js',
+  'isbn-recognition-regression.test.js',
   'scan-regression.test.js',
   'backup-roundtrip-regression.test.js',
   'location-regression.test.js',

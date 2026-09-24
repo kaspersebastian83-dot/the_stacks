@@ -29,9 +29,10 @@ function setBookViews(views){booksRef.current=views;}
 function toast(){}
 const lookupResults=new Map([
   ['9780140449112',{isbn:'9780140449112',title:'The Odyssey',authors:'Homer',publisher:'Penguin Classics',year:'1996',language:'English',format:'Paperback',metadataSource:'Synthetic catalog'}],
-  ['9780306406157',null]
+  ['9780306406157',null],
+  ['9781234567897',{transient:true}]
 ]);
-async function lookupBook(isbn){return lookupResults.get(isbn)||null;}
+async function lookupBook(isbn,options={}){const result=lookupResults.get(isbn);if(result?.transient){options.trace?.push({provider:'openlibrary',strategy:'books-api-'+isbn,state:'TIMEOUT'});return null;}return result||null;}
 `;
 
 const source=runtime+isbnSource+
@@ -119,6 +120,12 @@ const api=context.api;
   assert.equal(unidentifiedResult.book.title,'Unidentified book');
   assert.equal(unidentifiedResult.book.isbn,'9780306406157');
   assert.equal(api.getEditing(),null,'Silent deterministic scan does not open UI state');
+
+  const outageResult=await api.processScan('9781234567897',{quiet:true,silentReview:true});
+  assert.equal(outageResult.state,'review','An incomplete lookup preserves the physical Copy');
+  assert.equal(outageResult.retryable,true,'A transient provider failure is explicitly retryable');
+  assert.match(outageResult.detail,/lookup incomplete; retry identification/i);
+  assert.equal(outageResult.book.needsIdentification,true);
 
   const unidentifiedBefore=JSON.stringify(unidentifiedResult.book);
   const identified=api.applyMetadataToBook(unidentifiedResult.book,{title:'Theoretical Physics',authors:'A. Researcher',metadataSource:'Synthetic identification'},['title','authors'],'selected');
